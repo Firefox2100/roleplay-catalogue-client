@@ -1,0 +1,73 @@
+export type Locale = "en-GB" | "zh-CN";
+export type ProviderKind = "openai" | "anthropic" | "ollama" | "openai-compatible";
+export interface AppConfig { locale: Locale; llm: { provider: ProviderKind; baseUrl: string; apiKey: string; model: string; contextWindow: number; maxOutputTokens: number; temperature: number }; catalogue: { baseUrl: string; apiKey: string } }
+export interface BootstrapData { version: string; config: AppConfig }
+
+export type ResourceVisibility = "private" | "authenticated" | "public";
+export interface ResourceMetadata { name: string; description: string; visibility: ResourceVisibility; tags: string[] }
+export interface CatalogueResource { id: string; resourceType: string; authorId: string; metadata: ResourceMetadata; draftDataId: string | null; coverImageResourceId: string | null; createdAt: string; updatedAt: string; authorUsername: string }
+export interface ResourceList { items: CatalogueResource[]; nextOffset: number | null }
+export interface CoverImage { mediaType: string; data: string }
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export interface CharacterRegexScript {
+  id: string | number;
+  scriptName: string;
+  findRegex: string;
+  replaceString: string;
+  trimStrings: string[];
+  placement: number[];
+  disabled: boolean;
+  markdownOnly: boolean;
+  promptOnly: boolean;
+  runOnEdit: boolean;
+  substituteRegex: number | boolean;
+  minDepth: number | null;
+  maxDepth: number | null;
+  [key: string]: JsonValue;
+}
+export interface CharacterScriptButton {
+  enabled: boolean;
+  buttons: Array<Record<string, JsonValue>>;
+  [key: string]: JsonValue;
+}
+export interface CharacterScript {
+  type: string;
+  enabled: boolean;
+  name: string;
+  id: string | number;
+  content: string;
+  info: string;
+  button: CharacterScriptButton;
+  data: Record<string, JsonValue>;
+  [key: string]: JsonValue;
+}
+export interface TavernHelperExtension {
+  scripts: CharacterScript[];
+  variables: Record<string, JsonValue>;
+  [key: string]: JsonValue;
+}
+export interface CharacterCardV3Extensions {
+  regex_scripts: CharacterRegexScript[];
+  tavern_helper: TavernHelperExtension | null;
+  [key: string]: JsonValue;
+}
+export interface CharacterCardV3Data {
+  name: string;
+  description: string;
+  personality: string;
+  scenario: string;
+  first_mes: string;
+  mes_example: string;
+  creator_notes: string;
+  system_prompt: string;
+  post_history_instructions: string;
+  alternate_greetings: string[];
+  tags: string[];
+  creator: string;
+  character_version: string;
+  extensions: CharacterCardV3Extensions;
+  [key: string]: JsonValue;
+}
+export interface CharacterDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: CharacterCardV3Data }
+export interface SelectedCharacter { resource: CatalogueResource; draft: CharacterDraft | null }
+export interface CreateCharacterInput { name: string; description: string; visibility: ResourceVisibility; tags: string[] }
