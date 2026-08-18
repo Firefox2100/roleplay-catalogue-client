@@ -1,0 +1,39 @@
+.runtime-page { max-width: 980px; margin: 0 auto; padding-bottom: 86px; }
+.runtime-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 22px; margin-bottom: 18px; }
+.runtime-heading h1 { margin: 1px 0 7px; font-size: 30px; }
+.runtime-heading p { margin: 0; color: #687681; }
+.runtime-heading button { white-space: nowrap; }
+.runtime-eyebrow { color: #176b87 !important; font-size: 12px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.runtime-guide { margin-bottom: 12px; padding: 15px 18px; border-left: 3px solid #438097; border-radius: 0 8px 8px 0; background: #eaf3f6; }
+.runtime-guide strong { color: #174f63; font-size: 13px; }
+.runtime-guide p { margin: 5px 0 0; color: #526873; font-size: 13px; line-height: 1.55; }
+.runtime-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.runtime-summary article { padding: 14px 16px; border: 1px solid #dce2e6; border-radius: 9px; background: #fff; }
+.runtime-summary strong, .runtime-summary span { display: block; }
+.runtime-summary strong { color: #263743; font-size: 20px; }
+.runtime-summary span { margin-top: 3px; color: #74818a; font-size: 11px; }
+.runtime-principles, .runtime-editor { margin-bottom: 12px; padding: 18px 20px; border: 1px solid #dce2e6; border-radius: 10px; background: #fff; }
+.runtime-principles h2, .runtime-editor h2 { margin: 0; color: #263743; font-size: 17px; }
+.runtime-principles ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 13px 0 0; padding: 0; list-style: none; }
+.runtime-principles li { padding: 11px 13px; border-radius: 7px; background: #eef4f6; color: #526873; font-size: 12px; line-height: 1.5; }
+.runtime-editor { transition: border-color .12s, box-shadow .12s; }
+.runtime-editor.active { border-color: #6394a5; box-shadow: 0 0 0 3px #e2f0f4; }
+.runtime-editor > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.runtime-editor header p { margin: 5px 0 0; color: #526873; font-size: 12px; font-weight: 650; }
+.runtime-editor header > strong { flex: none; color: #74818a; font-size: 11px; font-weight: 500; }
+.runtime-field-hint { margin: 11px 0 0; color: #74818a; font-size: 12px; line-height: 1.5; }
+.runtime-editor textarea { width: 100%; margin-top: 13px; border: 1px solid #cbd5db; border-radius: 7px; background: #fff; color: #263743; padding: 12px; font: 13px/1.6 ui-monospace, monospace; outline: none; resize: vertical; }
+.runtime-editor textarea:focus { border-color: #287590; }
+.runtime-save-bar { position: fixed; right: 370px; bottom: 0; left: 264px; z-index: 8; display: flex; justify-content: flex-end; align-items: center; gap: 16px; padding: 13px clamp(24px,5vw,72px); border-top: 1px solid #dce2e6; background: rgba(245,247,248,.96); }
+.runtime-save-bar span { color: #6f5a23; font-size: 13px; }
+.right-closed .runtime-save-bar { right: 0; }
+.left-closed .runtime-save-bar { left: 0; }
+@media (max-width: 720px) {
+  .runtime-heading { flex-direction: column; }
+  .runtime-heading button { width: 100%; }
+  .runtime-summary { grid-template-columns: 1fr; }
+  .runtime-principles ul { grid-template-columns: 1fr; }
+  .runtime-principles, .runtime-editor { padding: 16px; }
+  .runtime-editor > header { flex-direction: column; gap: 7px; }
+  .runtime-save-bar { right: 0; left: 0; padding: 11px 16px; }
+}

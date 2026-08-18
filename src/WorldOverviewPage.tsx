@@ -3,7 +3,15 @@ import type { MessageKey } from "./i18n";
 import type { EditorContext, WorldOverview } from "./types";
 import "./WorldOverviewPage.css";
 
-const commonTags = ["Science Fiction", "Near Future", "Fantasy", "Wuxia", "Xianxia", "Historical", "Contemporary", "Horror", "Mystery", "Romance", "Cyberpunk", "Steampunk", "Post-apocalyptic", "Urban Fantasy"];
+const commonTags: Array<{ value: string; label: MessageKey }> = [
+  { value: "Science Fiction", label: "tagScienceFiction" }, { value: "Near Future", label: "tagNearFuture" },
+  { value: "Fantasy", label: "tagFantasy" }, { value: "Wuxia", label: "tagWuxia" },
+  { value: "Xianxia", label: "tagXianxia" }, { value: "Historical", label: "tagHistorical" },
+  { value: "Contemporary", label: "tagContemporary" }, { value: "Horror", label: "tagHorror" },
+  { value: "Mystery", label: "tagMystery" }, { value: "Romance", label: "tagRomance" },
+  { value: "Cyberpunk", label: "tagCyberpunk" }, { value: "Steampunk", label: "tagSteampunk" },
+  { value: "Post-apocalyptic", label: "tagPostApocalyptic" }, { value: "Urban Fantasy", label: "tagUrbanFantasy" },
+];
 
 const structures: Array<{ value: WorldOverview["castMode"]; title: MessageKey; description: MessageKey; focus: MessageKey }> = [
   { value: "fixed-single", title: "fixedSingle", description: "fixedSingleDescription", focus: "fixedSingleFocus" },
@@ -43,12 +51,16 @@ export function WorldOverviewPage({ value, status, context, onChange, onContext,
     setTag("");
   };
   const removeTag = (candidate: string) => onChange({ ...value, tags: value.tags.filter((item) => item !== candidate) });
+  const tagLabel = (tagValue: string) => {
+    const common = commonTags.find((item) => item.value === tagValue);
+    return common ? t(common.label) : tagValue;
+  };
   return <section className="world-overview-page">
     <header className="world-overview-heading"><div><h1>{t("worldOverviewTitle")}</h1><p>{t("worldOverviewIntro")}</p><small>{t("worldOverviewLocal")}</small></div><button className="secondary" onClick={onDraft}>{t("draftWorldWithAssistant")}</button></header>
     <section className="world-section structure-section"><div className="world-field-heading"><h2>{t("characterStructure")}</h2><p>{t("characterStructureHint")}</p></div><div className="structure-grid">{structures.map((structure) => <label key={structure.value} className={value.castMode === structure.value ? "selected" : ""}><input type="radio" name="cast-mode" value={structure.value} checked={value.castMode === structure.value} onChange={() => onChange({ ...value, castMode: structure.value })} /><span><strong>{t(structure.title)}</strong><small>{t(structure.description)}</small><em>{t("templateFocus")}</em><small>{t(structure.focus)}</small></span></label>)}</div></section>
     <section className="world-section world-tags-section"><div className="world-field-heading"><div><h2>{t("worldTags")}</h2><p>{t("worldTagsHint")}</p></div></div>
-      <div className="selected-world-tags">{value.tags.map((item) => <button key={item} onClick={() => removeTag(item)} title={`${t("removeTag")}: ${item}`}>{item}<span aria-hidden="true">×</span></button>)}</div>
-      <div className="common-world-tags">{commonTags.filter((item) => !value.tags.includes(item)).map((item) => <button key={item} onClick={() => addTag(item)}>{item}</button>)}</div>
+      <div className="selected-world-tags">{value.tags.map((item) => <button key={item} onClick={() => removeTag(item)} title={`${t("removeTag")}: ${tagLabel(item)}`}>{tagLabel(item)}<span aria-hidden="true">×</span></button>)}</div>
+      <div className="common-world-tags">{commonTags.filter((item) => !value.tags.includes(item.value)).map((item) => <button key={item.value} onClick={() => addTag(item.value)}>{t(item.label)}</button>)}</div>
       <div className="custom-tag-input"><input value={tag} placeholder={t("customTag")} onChange={(event) => setTag(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addTag(tag); } }} /><button className="secondary" onClick={() => addTag(tag)} disabled={!tag.trim()}>{t("addTag")}</button></div>
     </section>
     <div className="world-field-list">{fields.map((field) => {

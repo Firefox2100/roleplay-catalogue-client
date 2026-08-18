@@ -8,6 +8,7 @@
 .resource-card-info:focus-visible { border-radius: 5px; box-shadow: 0 0 0 3px #dceff5; }
 .resource-card-title { align-items: flex-start; }
 .resource-card h2 { overflow: hidden; text-overflow: ellipsis; }
+.resource-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .resource-tooltip { position: absolute; left: 0; right: 0; bottom: calc(100% + 9px); z-index: 5; max-height: 190px; overflow: auto; padding: 10px 12px; border: 1px solid #cbd5db; border-radius: 7px; background: #263743; color: #fff; font-size: 12px; line-height: 1.45; box-shadow: 0 8px 22px rgba(24, 38, 47, .2); opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .12s, transform .12s, visibility .12s; pointer-events: none; white-space: pre-wrap; }
 .resource-card-info:hover .resource-tooltip,
 .resource-card-info:focus .resource-tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
