@@ -127,4 +127,4 @@ export interface EditorContext { path: string | null; selectedText: string | nul
 export interface AiProposal { id: string; path: string; value: JsonValue; rationale: string }
 export interface AiMessage { id: string; conversationId: string; role: "user" | "assistant"; content: string; proposals: AiProposal[]; createdAt: string }
 export interface AiConversation { id: string; resourceId: string | null; title: string; createdAt: string; updatedAt: string; messages: AiMessage[] }
-export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | null; worldOverview: WorldOverview | null; selection: EditorContext | null }
+export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }

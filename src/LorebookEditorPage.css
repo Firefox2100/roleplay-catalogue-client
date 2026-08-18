@@ -8,6 +8,7 @@
 .lorebook-heading-stats { display: grid; grid-template-columns: auto auto; gap: 2px 8px; align-self: start; padding: 10px 14px; border: 1px solid #dce2e6; border-radius: 8px; background: #fff; }
 .lorebook-heading-stats strong { color: #263743; text-align: right; }
 .lorebook-heading-stats span { color: #74818a; font-size: 11px; }
+.lorebook-heading-actions { display: flex; align-items: flex-start; gap: 9px; }
 .lorebook-settings, .lorebook-entry-list, .lorebook-entry-editor { border: 1px solid #dce2e6; border-radius: 10px; background: #fff; }
 .lorebook-settings { margin-bottom: 12px; padding: 17px 19px; }
 .lorebook-settings h2, .lorebook-entry-list h2, .lorebook-entry-editor h2 { margin: 0; color: #263743; font-size: 16px; }
@@ -19,6 +20,19 @@
 .lorebook-check { display: flex; align-items: center; gap: 8px; padding-top: 23px; }
 .lorebook-check input { width: auto; margin: 0; }
 .lorebook-workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 12px; align-items: start; }
+.lorebook-tools { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); gap: 12px; margin-bottom: 12px; }
+.activation-tester, .lorebook-diagnostics { padding: 16px 18px; border: 1px solid #dce2e6; border-radius: 10px; background: #fff; }
+.activation-tester h2, .lorebook-diagnostics h2 { margin: 0; color: #263743; font-size: 16px; }
+.activation-tester > p, .lorebook-diagnostics > p { margin: 5px 0 10px; color: #74818a; font-size: 11px; line-height: 1.45; }
+.activation-tester textarea { width: 100%; border: 1px solid #cbd5db; border-radius: 7px; padding: 9px 10px; resize: vertical; }
+.activation-tester > div { display: flex; gap: 8px; margin-top: 9px; font-size: 11px; }
+.activation-tester > div strong { color: #40515b; }
+.activation-tester > div span { color: #687681; }
+.lorebook-diagnostics ul { max-height: 130px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.lorebook-diagnostics li { margin-bottom: 5px; border-left: 3px solid #b88438; }
+.lorebook-diagnostics li.error { border-color: #b64b43; }
+.lorebook-diagnostics button { width: 100%; border: 0; background: #f7f3e9; color: #66542c; padding: 7px 9px; font-size: 11px; text-align: left; cursor: pointer; }
+.lorebook-diagnostics li.error button { background: #fff0ef; color: #8a302a; }
 .lorebook-entry-list { overflow: hidden; }
 .lorebook-entry-list > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 13px; border-bottom: 1px solid #edf0f2; }
 .lorebook-entry-list > header > div { display: flex; gap: 7px; align-items: center; }
@@ -28,6 +42,7 @@
 .lorebook-entry-list > div { max-height: 650px; overflow-y: auto; padding: 7px; }
 .lorebook-entry-list > div > button { position: relative; width: 100%; display: block; margin-bottom: 5px; padding: 10px 34px 10px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #34444f; text-align: left; cursor: pointer; }
 .lorebook-entry-list > div > button.active { border-color: #8eb2bf; background: #eaf3f6; }
+.lorebook-entry-list > div > button.activated { box-shadow: inset 3px 0 #428363; }
 .lorebook-entry-list button strong, .lorebook-entry-list button small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lorebook-entry-list button small { margin-top: 3px; color: #74818a; font-size: 10px; }
 .lorebook-entry-list button span { position: absolute; top: 10px; right: 8px; color: #66818d; font-size: 9px; }
@@ -48,4 +63,4 @@
 .right-closed .lorebook-save-bar { right: 0; }
 .left-closed .lorebook-save-bar { left: 0; }
 @media (max-width: 900px) { .lorebook-settings-grid { grid-template-columns: repeat(2, 1fr); } .lorebook-workspace { grid-template-columns: 210px minmax(0,1fr); } }
-@media (max-width: 720px) { .lorebook-heading { flex-direction: column; } .lorebook-workspace { grid-template-columns: 1fr; } .lorebook-entry-list > div { max-height: 240px; } .lorebook-entry-editor > header { flex-direction: column; } .entry-form-grid, .lorebook-settings-grid { grid-template-columns: 1fr; } .entry-form-grid .entry-wide { grid-column: auto; } .lorebook-check { padding-top: 5px; } .lorebook-save-bar { right: 0; left: 0; padding: 11px 16px; } }
+@media (max-width: 720px) { .lorebook-heading, .lorebook-heading-actions { flex-direction: column; } .lorebook-heading-actions, .lorebook-heading-actions > button { width: 100%; } .lorebook-tools, .lorebook-workspace { grid-template-columns: 1fr; } .lorebook-entry-list > div { max-height: 240px; } .lorebook-entry-editor > header { flex-direction: column; } .entry-form-grid, .lorebook-settings-grid { grid-template-columns: 1fr; } .entry-form-grid .entry-wide { grid-column: auto; } .lorebook-check { padding-top: 5px; } .lorebook-save-bar { right: 0; left: 0; padding: 11px 16px; } }

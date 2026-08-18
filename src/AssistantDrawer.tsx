@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { deleteAiConversation, listAiConversations, sendAiMessage } from "./backend";
 import type { MessageKey } from "./i18n";
-import type { AiConversation, AiProposal, EditorContext, SelectedCharacter, WorldOverview } from "./types";
+import type { AiConversation, AiProposal, EditorContext, SelectedResource, WorldOverview } from "./types";
 import "./AssistantDrawer.css";
 
 export function AssistantDrawer({ open, onClose, selected, worldOverview, context, draftPrompt, onDraftPromptUsed, providerConfigured, onAccept, onClearContext, t }: {
   open: boolean;
   onClose: () => void;
-  selected: SelectedCharacter | null;
+  selected: SelectedResource | null;
   worldOverview: WorldOverview | null;
   context: EditorContext;
   draftPrompt: string | null;
   onDraftPromptUsed: () => void;
   providerConfigured: boolean;
-  onAccept: (proposal: AiProposal) => void;
+  onAccept: (proposal: AiProposal) => boolean;
   onClearContext: () => void;
   t: (key: MessageKey) => string;
 }) {
@@ -74,6 +74,7 @@ export function AssistantDrawer({ open, onClose, selected, worldOverview, contex
       const conversation = await sendAiMessage({
         conversationId: requestConversationId,
         resourceId,
+        resourceType: selected?.resource.resourceType === "sillytavern/lorebook" ? "sillytavern/lorebook" : "sillytavern/character",
         resourceLanguage: selected?.resource.metadata.language ?? "en-uk",
         message: outgoing,
         draft: selected?.draft?.data ?? null,
@@ -113,8 +114,7 @@ export function AssistantDrawer({ open, onClose, selected, worldOverview, contex
   };
 
   const accept = (proposal: AiProposal) => {
-    onAccept(proposal);
-    setAccepted((items) => new Set(items).add(proposal.id));
+    if (onAccept(proposal)) setAccepted((items) => new Set(items).add(proposal.id));
   };
   const proposalText = (proposal: AiProposal) => typeof proposal.value === "string" ? proposal.value : JSON.stringify(proposal.value, null, 2);
 
