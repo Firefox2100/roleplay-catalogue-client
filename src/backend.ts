@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiConversation, AppConfig, BootstrapData, CharacterCardV3Data, CharacterDraft, CoverImage, CreateCharacterInput, ResourceList, SelectedCharacter, SendAiMessageInput, WorldOverview } from "./types";
+import type { AiConversation, AppConfig, BootstrapData, CharacterCardV3Data, CharacterDraft, CoverImage, CreateResourceInput, LorebookData, LorebookDraft, ResourceList, SelectedResource, SendAiMessageInput, WorldOverview } from "./types";
 export const loadBootstrap = () => invoke<BootstrapData>("load_bootstrap");
 export const saveConfiguration = (config: AppConfig) => invoke<AppConfig>("save_configuration", { config });
-export const listOwnedCharacters = () => invoke<ResourceList>("list_owned_characters");
+export const listOwnedResources = (resourceType: CreateResourceInput["resourceType"]) => invoke<ResourceList>("list_owned_resources", { resourceType });
 export const fetchCharacterCover = (resourceId: string) => invoke<CoverImage | null>("fetch_character_cover", { resourceId });
-export const selectCharacter = (resourceId: string) => invoke<SelectedCharacter>("select_character", { resourceId });
-export const createCharacter = (input: CreateCharacterInput) => invoke<SelectedCharacter>("create_character", { input });
+export const selectResource = (resourceId: string, resourceType: CreateResourceInput["resourceType"]) => invoke<SelectedResource>("select_resource", { resourceId, resourceType });
+export const createResource = (input: CreateResourceInput) => invoke<SelectedResource>("create_resource", { input });
 export const saveCharacterDraft = (resourceId: string, data: CharacterCardV3Data) => invoke<CharacterDraft>("save_character_draft", { resourceId, data });
+export const saveLorebookDraft = (resourceId: string, data: LorebookData) => invoke<LorebookDraft>("save_lorebook_draft", { resourceId, data });
 export const listAiConversations = (resourceId: string | null) => invoke<AiConversation[]>("list_ai_conversations", { resourceId });
 export const deleteAiConversation = (conversationId: string) => invoke<void>("delete_ai_conversation", { conversationId });
 export const sendAiMessage = (input: SendAiMessageInput) => invoke<AiConversation>("send_ai_message", { input });

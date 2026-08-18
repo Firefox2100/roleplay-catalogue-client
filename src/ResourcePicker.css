@@ -14,3 +14,6 @@
 .resource-card-info:focus .resource-tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
 .resource-card > button { border-radius: 0 0 9px 9px; }
 .resource-settings-action { margin-top: 18px; }
+.resource-type-filter { display: inline-flex; gap: 4px; margin: 0 0 18px; padding: 4px; border: 1px solid #d5dde2; border-radius: 9px; background: #f2f5f6; }
+.resource-type-filter button { min-height: 34px; padding: 6px 14px; border: 0; border-radius: 6px; background: transparent; color: #52616b; cursor: pointer; }
+.resource-type-filter button.active { background: #fff; color: #176b87; box-shadow: 0 1px 4px rgba(26, 45, 56, .12); }

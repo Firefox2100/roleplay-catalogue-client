@@ -22,8 +22,8 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(cjk * 1.05 + words * 1.3 + punctuation * 0.35));
 }
 
-function objectValue(value: JsonValue | undefined): Record<string, JsonValue> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+function objectValue(value: unknown): Record<string, JsonValue> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, JsonValue> : null;
 }
 
 function arrayValue(value: JsonValue | undefined): JsonValue[] {

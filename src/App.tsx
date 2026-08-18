@@ -2,21 +2,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import "./AppLayout.css";
 import { AssistantDrawer } from "./AssistantDrawer";
-import { saveCharacterDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
+import { saveCharacterDraft, saveLorebookDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
 import { CharacterFoundationPage } from "./CharacterFoundationPage";
 import { DialogueVoicePage } from "./DialogueVoicePage";
 import { MetadataPage } from "./MetadataPage";
+import { LorebookEditorPage } from "./LorebookEditorPage";
 import { translate, type MessageKey } from "./i18n";
 import { OverviewPage } from "./OverviewPage";
 import { ResourcePicker } from "./ResourcePicker";
 import { RuntimeInstructionsPage } from "./RuntimeInstructionsPage";
 import { ScenarioOpeningsPage } from "./ScenarioOpeningsPage";
 import { SecretInput } from "./SecretInput";
-import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, EditorContext, ProviderKind, SelectedCharacter, WorldOverview } from "./types";
+import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, EditorContext, LorebookData, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedResource, WorldOverview } from "./types";
 import { WorldOverviewPage } from "./WorldOverviewPage";
 import "./Theme.css";
 
-type Page = "resources" | "overview" | "world" | "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "settings";
+type Page = "resources" | "overview" | "world" | "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "lorebook" | "settings";
 const desktopDefault = () => window.matchMedia("(min-width: 721px)").matches;
 const fallback: BootstrapData = { version: "0.1.0", config: { locale: "en-GB", appearance: "system", llm: { provider: "openai", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4.1", contextWindow: 128000, maxOutputTokens: 4096, temperature: 0.7 }, catalogue: { baseUrl: "", apiKey: "" } } };
 const defaults: Record<ProviderKind, { baseUrl: string; model: string }> = { openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1" }, anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-5" }, ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2" }, "openai-compatible": { baseUrl: "", model: "" } };
@@ -30,7 +31,7 @@ function App() {
   const [data, setData] = useState(fallback);
   const [draft, setDraft] = useState<AppConfig>(fallback.config);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [selected, setSelected] = useState<SelectedCharacter | null>(null);
+  const [selected, setSelected] = useState<SelectedResource | null>(null);
   const [worldOverview, setWorldOverview] = useState<WorldOverview | null>(null);
   const [worldStatus, setWorldStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardStatus, setCardStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -49,7 +50,7 @@ function App() {
     return () => media.removeEventListener("change", apply);
   }, [draft.appearance]);
   useEffect(() => {
-    if (!selected) { setWorldOverview(null); return; }
+    if (!selected || selected.resource.resourceType !== "sillytavern/character") { setWorldOverview(null); return; }
     let current = true;
     setWorldStatus("idle");
     void loadWorldOverview(selected.resource.id).then((value) => { if (current) setWorldOverview(value); }).catch(() => { if (current) setWorldStatus("error"); });
@@ -66,7 +67,7 @@ function App() {
   const provider = (kind: ProviderKind) => setDraft((current) => ({ ...current, llm: { ...current.llm, provider: kind, ...defaults[kind] } }));
   const go = (next: Page) => { setPage(next); if (!desktopDefault()) setLeftOpen(false); };
   const save = async () => { setStatus("saving"); try { const config = await saveConfiguration(draft); setDraft(config); setData((current) => ({ ...current, config })); setStatus("saved"); } catch { setStatus("error"); } };
-  const selectResource = (value: SelectedCharacter) => { setSelected(value); setCardDirty(false); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage("overview"); if (!desktopDefault()) setLeftOpen(false); };
+  const selectResource = (value: SelectedResource) => { setSelected(value); setCardDirty(false); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage(value.resource.resourceType === "sillytavern/lorebook" ? "lorebook" : "overview"); if (!desktopDefault()) setLeftOpen(false); };
   const changeResource = () => { setSelected(null); setWorldOverview(null); setCardDirty(false); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage("resources"); };
   const persistWorldOverview = async (next = worldOverview) => {
     if (!next) return;
@@ -86,29 +87,48 @@ function App() {
     }
     if (collectionProposalPaths.has(proposal.path)) {
       if (!Array.isArray(proposal.value) || !proposal.value.every((value) => typeof value === "string")) return;
-      setSelected((current) => current?.draft ? { ...current, draft: { ...current.draft, data: { ...current.draft.data, [proposal.path]: proposal.value } } } : current);
+      setSelected((current) => current?.draft && current.resource.resourceType === "sillytavern/character" ? { ...current, draft: { ...current.draft, data: { ...(current.draft.data as CharacterCardV3Data), [proposal.path]: proposal.value } } } as SelectedCharacter : current);
       setCardDirty(true);
       setCardStatus("idle");
       setEditorContext({ path: proposal.path, selectedText: null, cursor: null });
       return;
     }
     if (!textProposalPaths.has(proposal.path) || typeof proposal.value !== "string") return;
-    setSelected((current) => current?.draft ? { ...current, draft: { ...current.draft, data: { ...current.draft.data, [proposal.path]: proposal.value } } } : current);
+    setSelected((current) => current?.draft && current.resource.resourceType === "sillytavern/character" ? { ...current, draft: { ...current.draft, data: { ...(current.draft.data as CharacterCardV3Data), [proposal.path]: proposal.value } } } as SelectedCharacter : current);
     setCardDirty(true);
     setCardStatus("idle");
     setEditorContext({ path: proposal.path, selectedText: proposal.value, cursor: proposal.value.length });
   };
   const updateCard = (card: CharacterCardV3Data) => {
-    setSelected((current) => current?.draft ? { ...current, draft: { ...current.draft, data: card } } : current);
+    setSelected((current) => current?.draft && current.resource.resourceType === "sillytavern/character" ? { ...current, draft: { ...current.draft, data: card } } as SelectedCharacter : current);
     setCardDirty(true);
     setCardStatus("idle");
   };
   const saveCard = async () => {
-    if (!selected?.draft || !cardDirty) return;
+    if (!selected?.draft || selected.resource.resourceType !== "sillytavern/character" || !cardDirty) return;
     setCardStatus("saving");
     try {
-      const saved = await saveCharacterDraft(selected.resource.id, selected.draft.data);
+      const saved = await saveCharacterDraft(selected.resource.id, selected.draft.data as CharacterCardV3Data);
       setSelected((current) => current ? { ...current, draft: saved } : current);
+      setCardDirty(false);
+      setCardStatus("saved");
+    } catch { setCardStatus("error"); }
+  };
+  const updateStandaloneLorebook = (data: LorebookData) => {
+    setSelected((current) => {
+      if (!current || current.resource.resourceType !== "sillytavern/lorebook") return current;
+      const draft = current.draft ? { ...current.draft, data } : { id: "", resourceId: current.resource.id, resourceVersionId: null, createdAt: "", updatedAt: "", data };
+      return { ...current, draft } as SelectedLorebook;
+    });
+    setCardDirty(true);
+    setCardStatus("idle");
+  };
+  const saveStandaloneLorebook = async () => {
+    if (!selected?.draft || selected.resource.resourceType !== "sillytavern/lorebook" || !cardDirty) return;
+    setCardStatus("saving");
+    try {
+      const saved = await saveLorebookDraft(selected.resource.id, selected.draft.data as LorebookData);
+      setSelected((current) => current ? { ...current, draft: saved } as SelectedLorebook : current);
       setCardDirty(false);
       setCardStatus("saved");
     } catch { setCardStatus("error"); }
@@ -128,38 +148,47 @@ function App() {
     <main className="page resource-gate-page">{page === "settings" ? <><button className="secondary resource-gate-back" onClick={() => setPage("resources")}>{t("backToResources")}</button><SettingsPage draft={draft} status={status} llm={llm} provider={provider} setDraft={setDraft} save={save} t={t} /></> : <ResourcePicker configured={Boolean(data.config.catalogue.baseUrl && data.config.catalogue.apiKey)} selected={null} locale={draft.locale} onSelected={selectResource} onOpenSettings={() => setPage("settings")} t={t} />}</main>
   </div>;
 
-  return <div className={shellClass}>
+  const standaloneLorebook = selected.resource.resourceType === "sillytavern/lorebook" ? selected as SelectedLorebook : null;
+  const selectedCharacter = standaloneLorebook ? null : selected as SelectedCharacter;
+  const effectiveShellClass = standaloneLorebook ? `app-shell ${leftOpen ? "left-open" : "left-closed"} right-closed` : shellClass;
+
+  return <div className={effectiveShellClass}>
     {!leftOpen && <button className="drawer-launch drawer-launch--left" onClick={() => { setLeftOpen(true); if (mobile) setRightOpen(false); }} aria-label={t("expandNav")}>☰</button>}
-    {!rightOpen && <button className="drawer-launch drawer-launch--right" onClick={() => { setRightOpen(true); if (mobile) setLeftOpen(false); }} aria-label={t("expandAssistant")}>✦</button>}
-    {mobile && (leftOpen || rightOpen) && <button className="scrim" onClick={closeOverlay} aria-label={leftOpen ? t("closeNav") : t("closeAssistant")} />}
+    {!standaloneLorebook && !rightOpen && <button className="drawer-launch drawer-launch--right" onClick={() => { setRightOpen(true); if (mobile) setLeftOpen(false); }} aria-label={t("expandAssistant")}>✦</button>}
+    {mobile && (leftOpen || (!standaloneLorebook && rightOpen)) && <button className="scrim" onClick={closeOverlay} aria-label={leftOpen ? t("closeNav") : t("closeAssistant")} />}
 
     <aside className={`drawer ${leftOpen ? "drawer--open" : ""}`}>
       <nav className="nav-list">
         <div className="drawer-top"><strong>{selected?.resource.metadata.name ?? t("resources")}</strong><button onClick={() => setLeftOpen(false)} aria-label={t("collapseNav")}>‹</button></div>
-        <button className={page === "overview" ? "active" : ""} onClick={() => go("overview")}><span>◫</span>{t("overview")}</button>
+        {selectedCharacter && <><button className={page === "overview" ? "active" : ""} onClick={() => go("overview")}><span>◫</span>{t("overview")}</button>
         <button className={page === "world" ? "active" : ""} onClick={() => go("world")}><span>◎</span>{t("worldOverview")}</button>
         <button className={page === "foundation" ? "active" : ""} onClick={() => go("foundation")}><span>◇</span>{t("foundation")}</button>
         <button className={page === "scenes" ? "active" : ""} onClick={() => go("scenes")}><span>◈</span>{t("scenes")}</button>
         <button className={page === "dialogue" ? "active" : ""} onClick={() => go("dialogue")}><span>≋</span>{t("dialogueVoice")}</button>
         <button className={page === "runtime" ? "active" : ""} onClick={() => go("runtime")}><span>⌁</span>{t("runtimeInstructions")}</button>
         <button className={page === "metadata" ? "active" : ""} onClick={() => go("metadata")}><span>ⓘ</span>{t("metadata")}</button>
+        <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("embeddedLorebook")}</button></>}
+        {standaloneLorebook && <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("lorebookEditor")}</button>}
+        {standaloneLorebook && <button onClick={changeResource}><span>⇄</span>{t("changeResource")}</button>}
       </nav>
       <footer className="drawer-footer"><div><strong>{t("appName")}</strong><small>v{data.version}</small></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => go("settings")} aria-label={t("openSettings")} title={t("settings")}>⚙</button></footer>
     </aside>
 
     <main className="page">
-      {page === "overview" && <OverviewPage selected={selected} context={editorContext} onContext={setEditorContext} onChangeResource={changeResource} t={t} />}
-      {page === "world" && worldOverview && <WorldOverviewPage value={worldOverview} status={worldStatus} context={editorContext} onChange={(value) => { setWorldOverview(value); setWorldStatus("idle"); }} onContext={setEditorContext} onSave={() => void persistWorldOverview()} onDraft={() => { setEditorContext({ path: "worldOverview.summary", selectedText: worldOverview.summary || null, cursor: null }); setAssistantPrompt(translate(selected.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftWorldPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
-      {page === "world" && !worldOverview && <p className="loading-text">{t("loading")}</p>}
-      {page === "foundation" && <CharacterFoundationPage selected={selected} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "description", selectedText: selected.draft?.data.description || null, cursor: null }); setAssistantPrompt(translate(selected.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftFoundationPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
-      {page === "scenes" && <ScenarioOpeningsPage selected={selected} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "scenario", selectedText: selected.draft?.data.scenario || null, cursor: null }); setAssistantPrompt(translate(selected.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftScenesPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
-      {page === "dialogue" && <DialogueVoicePage selected={selected} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "mes_example", selectedText: selected.draft?.data.mes_example || null, cursor: null }); setAssistantPrompt(translate(selected.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftDialoguePrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
-      {page === "runtime" && <RuntimeInstructionsPage selected={selected} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "system_prompt", selectedText: selected.draft?.data.system_prompt || null, cursor: null }); setAssistantPrompt(translate(selected.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftRuntimePrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
-      {page === "metadata" && <MetadataPage selected={selected} worldOverview={worldOverview} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onSuggestTags={() => { const contentLocale = selected.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB"; setEditorContext({ path: "tags", selectedText: selected.draft?.data.tags.join(", ") || null, cursor: null }); setAssistantPrompt(`${translate(contentLocale, "suggestMetadataTagsPrompt")}\n\n${translate(contentLocale, "metadataTagSources")}: ${JSON.stringify(selected.resource.metadata.tags)}`); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "overview" && selectedCharacter && <OverviewPage selected={selectedCharacter} context={editorContext} onContext={setEditorContext} onChangeResource={changeResource} t={t} />}
+      {page === "world" && selectedCharacter && worldOverview && <WorldOverviewPage value={worldOverview} status={worldStatus} context={editorContext} onChange={(value) => { setWorldOverview(value); setWorldStatus("idle"); }} onContext={setEditorContext} onSave={() => void persistWorldOverview()} onDraft={() => { setEditorContext({ path: "worldOverview.summary", selectedText: worldOverview.summary || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftWorldPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "world" && selectedCharacter && !worldOverview && <p className="loading-text">{t("loading")}</p>}
+      {page === "foundation" && selectedCharacter && <CharacterFoundationPage selected={selectedCharacter} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "description", selectedText: selectedCharacter.draft?.data.description || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftFoundationPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "scenes" && selectedCharacter && <ScenarioOpeningsPage selected={selectedCharacter} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "scenario", selectedText: selectedCharacter.draft?.data.scenario || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftScenesPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "dialogue" && selectedCharacter && <DialogueVoicePage selected={selectedCharacter} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "mes_example", selectedText: selectedCharacter.draft?.data.mes_example || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftDialoguePrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "runtime" && selectedCharacter && <RuntimeInstructionsPage selected={selectedCharacter} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "system_prompt", selectedText: selectedCharacter.draft?.data.system_prompt || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftRuntimePrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "metadata" && selectedCharacter && <MetadataPage selected={selectedCharacter} worldOverview={worldOverview} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onSuggestTags={() => { const contentLocale = selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB"; setEditorContext({ path: "tags", selectedText: selectedCharacter.draft?.data.tags.join(", ") || null, cursor: null }); setAssistantPrompt(`${translate(contentLocale, "suggestMetadataTagsPrompt")}\n\n${translate(contentLocale, "metadataTagSources")}: ${JSON.stringify(selectedCharacter.resource.metadata.tags)}`); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {page === "lorebook" && selectedCharacter && <LorebookEditorPage value={selectedCharacter.draft?.data.character_book ?? null} fallbackName={selectedCharacter.resource.metadata.name} embedded dirty={cardDirty} status={cardStatus} onChange={(book) => selectedCharacter.draft && updateCard({ ...selectedCharacter.draft.data, character_book: book })} onSave={() => void saveCard()} t={t} />}
+      {page === "lorebook" && standaloneLorebook && <LorebookEditorPage value={standaloneLorebook.draft?.data ?? null} fallbackName={standaloneLorebook.resource.metadata.name} embedded={false} dirty={cardDirty} status={cardStatus} onChange={updateStandaloneLorebook} onSave={() => void saveStandaloneLorebook()} t={t} />}
       {page === "settings" && <SettingsPage draft={draft} status={status} llm={llm} provider={provider} setDraft={setDraft} save={save} t={t} />}
     </main>
 
-    <AssistantDrawer open={rightOpen} onClose={() => setRightOpen(false)} selected={selected} worldOverview={worldOverview} context={editorContext} draftPrompt={assistantPrompt} onDraftPromptUsed={consumeAssistantPrompt} providerConfigured={Boolean(data.config.llm.baseUrl && data.config.llm.model && (data.config.llm.provider === "ollama" || data.config.llm.apiKey))} onAccept={acceptProposal} onClearContext={() => setEditorContext({ path: null, selectedText: null, cursor: null })} t={t} />
+    {selectedCharacter && <AssistantDrawer open={rightOpen} onClose={() => setRightOpen(false)} selected={selectedCharacter} worldOverview={worldOverview} context={editorContext} draftPrompt={assistantPrompt} onDraftPromptUsed={consumeAssistantPrompt} providerConfigured={Boolean(data.config.llm.baseUrl && data.config.llm.model && (data.config.llm.provider === "ollama" || data.config.llm.apiKey))} onAccept={acceptProposal} onClearContext={() => setEditorContext({ path: null, selectedText: null, cursor: null })} t={t} />}
   </div>;
 }
 

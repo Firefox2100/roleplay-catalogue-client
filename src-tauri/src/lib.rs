@@ -93,14 +93,15 @@ struct CharacterDraft {
 }
 
 #[derive(Debug, Serialize)]
-struct SelectedCharacter {
+struct SelectedResource {
     resource: CatalogueResource,
     draft: Option<CharacterDraft>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateCharacterInput {
+struct CreateResourceInput {
+    resource_type: String,
     name: String,
     description: String,
     language: String,
@@ -1112,12 +1113,22 @@ fn save_configuration(app: AppHandle, config: AppConfig) -> Result<AppConfig, St
 }
 
 #[tauri::command]
-async fn list_owned_characters(app: AppHandle) -> Result<ResourceList, String> {
+async fn list_owned_resources(
+    app: AppHandle,
+    resource_type: String,
+) -> Result<ResourceList, String> {
+    if !matches!(
+        resource_type.as_str(),
+        "sillytavern/character" | "sillytavern/lorebook"
+    ) {
+        return Err("Unsupported resource type".into());
+    }
     let user: CurrentUser = catalogue_json(&app, reqwest::Method::GET, "/auth/me", None).await?;
+    let encoded_type = resource_type.replace('/', "%2F");
     let mut resources: ResourceList = catalogue_json(
         &app,
         reqwest::Method::GET,
-        "/resources?resourceType=sillytavern%2Fcharacter&limit=100",
+        &format!("/resources?resourceType={encoded_type}&limit=100"),
         None,
     )
     .await?;
@@ -1128,33 +1139,46 @@ async fn list_owned_characters(app: AppHandle) -> Result<ResourceList, String> {
 }
 
 #[tauri::command]
-async fn select_character(
+async fn select_resource(
     app: AppHandle,
     resource_id: String,
-) -> Result<SelectedCharacter, String> {
+    resource_type: String,
+) -> Result<SelectedResource, String> {
+    if !matches!(
+        resource_type.as_str(),
+        "sillytavern/character" | "sillytavern/lorebook"
+    ) {
+        return Err("Unsupported resource type".into());
+    }
     let path = format!("/resources/{resource_id}");
     let resource: CatalogueResource =
         catalogue_json(&app, reqwest::Method::GET, &path, None).await?;
-    if resource.resource_type != "sillytavern/character" {
-        return Err("Selected resource is not a character card".into());
+    if resource.resource_type != resource_type {
+        return Err("Selected resource type does not match".into());
     }
     let draft = fetch_draft(&app, &resource.id).await?;
-    Ok(SelectedCharacter { resource, draft })
+    Ok(SelectedResource { resource, draft })
 }
 
 #[tauri::command]
-async fn create_character(
+async fn create_resource(
     app: AppHandle,
-    input: CreateCharacterInput,
-) -> Result<SelectedCharacter, String> {
+    input: CreateResourceInput,
+) -> Result<SelectedResource, String> {
     if input.name.trim().is_empty() {
         return Err("Character name is required".into());
     }
     if !matches!(input.language.as_str(), "en-uk" | "zh-cn") {
         return Err("Unsupported resource language".into());
     }
+    if !matches!(
+        input.resource_type.as_str(),
+        "sillytavern/character" | "sillytavern/lorebook"
+    ) {
+        return Err("Unsupported resource type".into());
+    }
     let body = serde_json::json!({
-        "resourceType": "sillytavern/character",
+        "resourceType": input.resource_type,
         "name": input.name.trim(),
         "description": input.description.trim(),
         "language": input.language,
@@ -1163,8 +1187,24 @@ async fn create_character(
     });
     let resource: CatalogueResource =
         catalogue_json(&app, reqwest::Method::POST, "/resources", Some(body)).await?;
-    let draft = fetch_draft(&app, &resource.id).await?;
-    Ok(SelectedCharacter { resource, draft })
+    let mut draft = fetch_draft(&app, &resource.id).await?;
+    if draft.is_none() && resource.resource_type == "sillytavern/lorebook" {
+        let path = format!("/resources/{}/data", resource.id);
+        let created: CharacterDraft = catalogue_json(
+            &app,
+            reqwest::Method::PUT,
+            &path,
+            Some(serde_json::json!({ "data": {
+                "name": resource.metadata.name,
+                "description": resource.metadata.description,
+                "extensions": {},
+                "entries": []
+            }})),
+        )
+        .await?;
+        draft = Some(created);
+    }
+    Ok(SelectedResource { resource, draft })
 }
 
 #[tauri::command]
@@ -1189,6 +1229,28 @@ async fn save_character_draft(
     .await
 }
 
+#[tauri::command]
+async fn save_lorebook_draft(
+    app: AppHandle,
+    resource_id: String,
+    data: serde_json::Value,
+) -> Result<CharacterDraft, String> {
+    let resource_path = format!("/resources/{resource_id}");
+    let resource: CatalogueResource =
+        catalogue_json(&app, reqwest::Method::GET, &resource_path, None).await?;
+    if resource.resource_type != "sillytavern/lorebook" {
+        return Err("Selected resource is not a lorebook".into());
+    }
+    let path = format!("/resources/{resource_id}/data");
+    catalogue_json(
+        &app,
+        reqwest::Method::PUT,
+        &path,
+        Some(serde_json::json!({ "data": data })),
+    )
+    .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1196,11 +1258,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_bootstrap,
             save_configuration,
-            list_owned_characters,
+            list_owned_resources,
             fetch_character_cover,
-            select_character,
-            create_character,
+            select_resource,
+            create_resource,
             save_character_draft,
+            save_lorebook_draft,
             list_ai_conversations,
             delete_ai_conversation,
             send_ai_message,

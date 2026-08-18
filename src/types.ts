@@ -66,14 +66,44 @@ export interface CharacterCardV3Data {
   post_history_instructions: string;
   alternate_greetings: string[];
   group_only_greetings: string[];
+  character_book: LorebookData | null;
   tags: string[];
   creator: string;
   character_version: string;
   extensions: CharacterCardV3Extensions;
-  [key: string]: JsonValue;
 }
 export interface CharacterDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: CharacterCardV3Data }
 export interface SelectedCharacter { resource: CatalogueResource; draft: CharacterDraft | null }
+export type LorebookPosition = "before_char" | "after_char";
+export interface LorebookEntry {
+  keys: string[];
+  content: string;
+  extensions: Record<string, JsonValue>;
+  enabled: boolean;
+  insertion_order: number;
+  use_regex: boolean;
+  constant: boolean;
+  case_sensitive?: boolean | null;
+  name?: string | null;
+  priority?: number | null;
+  id?: number | string | null;
+  comment?: string | null;
+  selective?: boolean | null;
+  secondary_keys?: string[] | null;
+  position?: LorebookPosition | null;
+}
+export interface LorebookData {
+  name?: string | null;
+  description?: string | null;
+  scan_depth?: number | null;
+  token_budget?: number | null;
+  recursive_scanning?: boolean | null;
+  extensions: Record<string, JsonValue>;
+  entries: LorebookEntry[];
+}
+export interface LorebookDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: LorebookData }
+export interface SelectedLorebook { resource: CatalogueResource; draft: LorebookDraft | null }
+export type SelectedResource = SelectedCharacter | SelectedLorebook;
 export interface WorldOverview {
   resourceId: string;
   castMode: "fixed-single" | "fixed-ensemble" | "dynamic-ensemble";
@@ -92,6 +122,7 @@ export interface WorldOverview {
   updatedAt: string;
 }
 export interface CreateCharacterInput { name: string; description: string; language: ResourceLanguage; visibility: ResourceVisibility; tags: string[] }
+export interface CreateResourceInput extends CreateCharacterInput { resourceType: "sillytavern/character" | "sillytavern/lorebook" }
 export interface EditorContext { path: string | null; selectedText: string | null; cursor: number | null }
 export interface AiProposal { id: string; path: string; value: JsonValue; rationale: string }
 export interface AiMessage { id: string; conversationId: string; role: "user" | "assistant"; content: string; proposals: AiProposal[]; createdAt: string }
