@@ -1,0 +1,30 @@
+.drawer { transform: translateX(-100%); transition: transform .18s ease; }
+.drawer--open { transform: translateX(0); }
+.drawer-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 45px; margin: -8px 0 10px; padding: 0 4px 9px 12px; border-bottom: 1px solid #edf0f2; }
+.drawer-top strong { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-top button { width: 34px; height: 34px; border: 1px solid #d5dde2; border-radius: 7px; background: #fff; color: #52616b; cursor: pointer; }
+.drawer-launch { position: fixed; top: 12px; z-index: 18; width: 42px; height: 42px; border: 1px solid #cbd5db; border-radius: 8px; background: #fff; color: #33434f; box-shadow: 0 3px 12px rgba(28, 43, 52, .08); cursor: pointer; }
+.drawer-launch--left { left: 12px; }
+.drawer-launch--right { right: 12px; }
+.page { margin-left: 0; padding-top: 48px; transition: margin .18s ease; }
+.save-bar { left: 0; right: 0; transition: left .18s ease, right .18s ease; }
+.resource-gate { min-height: 100vh; }
+.resource-gate-page { min-height: 100vh; padding: 48px clamp(24px,5vw,72px); }
+.resource-gate-page > .resource-page, .resource-gate-page > .settings-page { max-width: 1080px; margin: 0 auto; }
+.left-closed .dialog-layer { left: 0; }
+.resource-gate-back { display: block; max-width: 1080px; margin: 0 auto 20px; }
+@media (min-width: 721px) {
+  .left-open .page { margin-left: 264px; }
+  .right-open .page { margin-right: 370px; }
+  .left-open .save-bar { left: 264px; }
+  .right-open .save-bar { right: 370px; }
+  .left-open .drawer-launch--left, .right-open .drawer-launch--right { display: none; }
+}
+@media (max-width: 720px) {
+  .mobile-menu { display: none; }
+  .drawer, .assistant-drawer { box-shadow: 0 12px 35px rgba(22, 35, 43, .2); }
+  .page { margin: 0; padding: 72px 16px 32px; }
+  .resource-gate-page { padding: 28px 16px 32px; }
+  .drawer-launch { z-index: 17; }
+  .left-open .drawer-launch--left, .right-open .drawer-launch--right { display: none; }
+}

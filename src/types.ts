@@ -70,4 +70,26 @@ export interface CharacterCardV3Data {
 }
 export interface CharacterDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: CharacterCardV3Data }
 export interface SelectedCharacter { resource: CatalogueResource; draft: CharacterDraft | null }
+export interface WorldOverview {
+  resourceId: string;
+  castMode: "fixed-single" | "fixed-ensemble" | "dynamic-ensemble";
+  tags: string[];
+  summary: string;
+  tone: string;
+  themes: string;
+  coreRules: string;
+  society: string;
+  technologyAndMagic: string;
+  history: string;
+  conflicts: string;
+  userRole: string;
+  intendedExperience: string;
+  constraints: string;
+  updatedAt: string;
+}
 export interface CreateCharacterInput { name: string; description: string; visibility: ResourceVisibility; tags: string[] }
+export interface EditorContext { path: string | null; selectedText: string | null; cursor: number | null }
+export interface AiProposal { id: string; path: string; value: string; rationale: string }
+export interface AiMessage { id: string; conversationId: string; role: "user" | "assistant"; content: string; proposals: AiProposal[]; createdAt: string }
+export interface AiConversation { id: string; resourceId: string | null; title: string; createdAt: string; updatedAt: string; messages: AiMessage[] }
+export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; message: string; draft: CharacterCardV3Data | null; worldOverview: WorldOverview | null; selection: EditorContext | null }

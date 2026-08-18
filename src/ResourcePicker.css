@@ -12,3 +12,4 @@
 .resource-card-info:hover .resource-tooltip,
 .resource-card-info:focus .resource-tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
 .resource-card > button { border-radius: 0 0 9px 9px; }
+.resource-settings-action { margin-top: 18px; }
