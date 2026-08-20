@@ -1,0 +1,41 @@
+.mvu-page { max-width: 1120px; margin: 0 auto; padding-bottom: 76px; }
+.mvu-heading { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.mvu-heading > div:first-child > p { margin: 0; color: #176b87; font-size: 12px; font-weight: 700; }
+.mvu-heading h1 { margin: 4px 0 6px; }
+.mvu-heading > div:first-child > span { color: #687681; }
+.mvu-install-state { align-self: flex-start; min-width: 190px; padding: 11px 13px; border: 1px solid #c5cfd4; border-radius: 9px; background: #f4f6f7; }
+.mvu-install-state strong, .mvu-install-state small { display: block; }
+.mvu-install-state strong { color: #66747c; font-size: 12px; }
+.mvu-install-state small { margin-top: 3px; color: #87939a; }
+.mvu-install-state.installed { border-color: #81ac91; background: #edf7f0; }
+.mvu-install-state.installed strong { color: #34704a; }
+.mvu-model, .mvu-preview { margin-bottom: 16px; padding: 18px; border: 1px solid #dce2e6; border-radius: 10px; background: #fff; }
+.mvu-model > header, .mvu-preview > header, .mvu-preview > footer { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.mvu-model h2, .mvu-preview h2 { margin: 0; font-size: 17px; }
+.mvu-model header p, .mvu-preview header p { margin: 5px 0 0; color: #6e7d86; font-size: 12px; }
+.mvu-group { margin-top: 14px; overflow: hidden; border: 1px solid #dce2e6; border-radius: 9px; }
+.mvu-group > header { display: grid; grid-template-columns: 28px minmax(130px,.55fr) minmax(180px,1fr) auto; gap: 8px; align-items: center; padding: 10px; background: #f3f6f7; }
+.mvu-group > header > span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: #dce8ec; color: #36677a; font-size: 11px; font-weight: 700; }
+.mvu-group input, .mvu-group select { min-width: 0; padding: 8px 9px; border: 1px solid #cbd5db; border-radius: 7px; background: #fff; color: #263743; }
+.mvu-fields { padding: 9px 10px 3px; }
+.mvu-field { display: grid; grid-template-columns: minmax(100px,.6fr) 105px minmax(100px,.55fr) minmax(180px,1fr) 32px; gap: 7px; margin-bottom: 7px; align-items: center; }
+.mvu-field-description { min-width: 180px !important; }
+.mvu-field-options { grid-column: 3 / 5; }
+.mvu-field input[type="number"] { width: 95px; }
+.mvu-add-field { margin: 3px 10px 11px; }
+.mvu-preview > header > div:last-child { display: flex; flex-wrap: wrap; gap: 6px; }
+.mvu-preview > header span { padding: 5px 8px; border-radius: 14px; background: #eef2f4; color: #576771; font-size: 11px; }
+.mvu-errors { margin: 14px 0; padding: 12px 14px; border: 1px solid #d1837d; border-radius: 8px; background: #fff1f0; color: #8e3731; }
+.mvu-errors ul { margin: 6px 0 0; padding-left: 20px; font-size: 12px; }
+.mvu-preview-grid { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(250px,.8fr); gap: 12px; margin-top: 15px; }
+.mvu-preview-grid article { min-width: 0; padding: 14px; border: 1px solid #e1e6e9; border-radius: 8px; }
+.mvu-preview-grid h3 { margin: 0 0 9px; font-size: 14px; }
+.mvu-preview-grid pre { max-height: 330px; overflow: auto; margin: 0; padding: 11px; border-radius: 7px; background: #f4f6f7; white-space: pre-wrap; font: 11px/1.5 ui-monospace, monospace; }
+.mvu-preview-grid ul { margin: 0; padding: 0; list-style: none; }
+.mvu-preview-grid li { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 8px; padding: 7px 0; border-bottom: 1px solid #edf0f2; font-size: 12px; }
+.mvu-preview-grid li strong { color: #60717a; font-size: 10px; text-transform: uppercase; }
+.mvu-preview > footer { align-items: center; margin-top: 15px; padding-top: 13px; border-top: 1px solid #e5eaed; }
+.mvu-preview > footer p { max-width: 620px; margin: 0; color: #6d7b84; font-size: 11px; }
+.mvu-preview > footer > div { display: flex; gap: 8px; }
+@media (max-width: 850px) { .mvu-field { grid-template-columns: minmax(120px,1fr) 110px minmax(140px,1fr) 32px; } .mvu-field-description { grid-column: 1 / 4; } .mvu-field-options { grid-column: 1 / 4; } }
+@media (max-width: 620px) { .mvu-heading, .mvu-model > header, .mvu-preview > header, .mvu-preview > footer { flex-direction: column; } .mvu-install-state { width: 100%; } .mvu-group > header { grid-template-columns: 28px 1fr auto; } .mvu-group > header input:nth-of-type(2) { grid-column: 2 / 4; } .mvu-field { grid-template-columns: 1fr 105px 32px; } .mvu-field > input:nth-child(3), .mvu-field-description, .mvu-field-options { grid-column: 1 / 3; } .mvu-preview-grid { grid-template-columns: 1fr; } .mvu-preview > footer > div { width: 100%; flex-wrap: wrap; } }

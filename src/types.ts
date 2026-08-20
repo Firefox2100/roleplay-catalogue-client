@@ -7,9 +7,13 @@ export interface BootstrapData { version: string; config: AppConfig }
 
 export type ResourceVisibility = "private" | "authenticated" | "public";
 export interface ResourceMetadata { name: string; description: string; language: ResourceLanguage; visibility: ResourceVisibility; tags: string[] }
-export interface CatalogueResource { id: string; resourceType: string; authorId: string; metadata: ResourceMetadata; draftDataId: string | null; coverImageResourceId: string | null; createdAt: string; updatedAt: string; authorUsername: string }
+export interface LorebookReference { resourceId: string; versionId: string | null }
+export interface CatalogueResource { id: string; resourceType: string; authorId: string; coAuthorIds: string[]; metadata: ResourceMetadata; draftDataId: string | null; coverImageResourceId: string | null; linkedLorebooks: LorebookReference[]; createdAt: string; updatedAt: string; authorUsername: string; revision: number }
 export interface ResourceList { items: CatalogueResource[]; nextOffset: number | null }
 export interface CoverImage { mediaType: string; data: string }
+export interface ResourceVersionSummary { id: string; resourceId: string; version: string; versionNumber: number; visibility: ResourceVisibility; coverImageResourceId: string | null }
+export interface LinkableLorebook { resource: CatalogueResource; versions: ResourceVersionSummary[]; draftEditable: boolean }
+export interface ResourceSaveOutcome { saved: CatalogueResource | null; current: CatalogueResource | null }
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 export interface CharacterRegexScript {
   id: string | number;
@@ -53,6 +57,7 @@ export interface CharacterCardV3Extensions {
   tavern_helper: TavernHelperExtension | null;
   [key: string]: JsonValue;
 }
+export interface CharacterAsset { type: string; uri: string; name: string; ext: string }
 export interface CharacterCardV3Data {
   name: string;
   nickname: string | null;
@@ -71,8 +76,9 @@ export interface CharacterCardV3Data {
   creator: string;
   character_version: string;
   extensions: CharacterCardV3Extensions;
+  assets?: CharacterAsset[] | null;
 }
-export interface CharacterDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: CharacterCardV3Data }
+export interface CharacterDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: CharacterCardV3Data; revision: number }
 export interface SelectedCharacter { resource: CatalogueResource; draft: CharacterDraft | null }
 export type LorebookPosition = "before_char" | "after_char";
 export interface LorebookEntry {
@@ -101,7 +107,8 @@ export interface LorebookData {
   extensions: Record<string, JsonValue>;
   entries: LorebookEntry[];
 }
-export interface LorebookDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: LorebookData }
+export interface LorebookDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: LorebookData; revision: number }
+export interface DraftSaveOutcome<T> { saved: T | null; current: T | null }
 export interface SelectedLorebook { resource: CatalogueResource; draft: LorebookDraft | null }
 export type SelectedResource = SelectedCharacter | SelectedLorebook;
 export interface WorldOverview {

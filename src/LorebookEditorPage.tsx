@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MessageKey } from "./i18n";
 import { estimateTokens } from "./OverviewPage";
-import type { EditorContext, LorebookData, LorebookEntry } from "./types";
+import type { EditorContext, LorebookData, LorebookDraft, LorebookEntry } from "./types";
 import "./LorebookEditorPage.css";
 
 const blankBook = (name: string): LorebookData => ({ name, description: "", scan_depth: null, token_budget: null, recursive_scanning: false, extensions: {}, entries: [] });
@@ -39,12 +39,16 @@ const simulateActivation = (book: LorebookData, initial: string) => {
   return active;
 };
 
-export function LorebookEditorPage({ value, fallbackName, embedded, dirty, status, onChange, onContext, onDraft, onSave, t }: {
+export function LorebookEditorPage({ value, fallbackName, embedded, dirty, status, conflict = null, localRevision = 0, onUseServerDraft, onRetryConflict, onChange, onContext, onDraft, onSave, t }: {
   value: LorebookData | null;
   fallbackName: string;
   embedded: boolean;
   dirty: boolean;
   status: "idle" | "saving" | "saved" | "error";
+  conflict?: LorebookDraft | null;
+  localRevision?: number;
+  onUseServerDraft?: () => void;
+  onRetryConflict?: () => void;
   onChange: (value: LorebookData) => void;
   onContext: (context: EditorContext) => void;
   onDraft: () => void;
@@ -54,6 +58,7 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
   const [entryKeys, setEntryKeys] = useState<string[]>(() => (value?.entries ?? []).map(() => newKey()));
   const [selectedKey, setSelectedKey] = useState<string | null>(() => entryKeys[0] ?? null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [discardConflictOpen, setDiscardConflictOpen] = useState(false);
   const [testText, setTestText] = useState("");
   useEffect(() => {
     const length = value?.entries.length ?? 0;
@@ -108,6 +113,7 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
   };
   return <section className="lorebook-page">
     <header className="lorebook-heading"><div><p className="lorebook-eyebrow">{embedded ? t("embeddedInCharacter") : t("standaloneLorebook")}</p><h1>{t("lorebookEditor")}</h1><p>{t("lorebookIntro")}</p></div><div className="lorebook-heading-actions"><button className="secondary" onClick={onDraft}>{t("draftLoreEntry")}</button><div className="lorebook-heading-stats"><strong>{value.entries.length}</strong><span>{t("loreEntries")}</span><strong>~{totalTokens}</strong><span>{t("approximateTokens")}</span></div></div></header>
+    {conflict && <section className="lorebook-conflict" role="alert"><div><h2>{t("draftConflict")}</h2><p>{t("draftConflictDetail")}</p><small>{t("localRevision")}: {localRevision} · {t("serverRevision")}: {conflict.revision}</small></div><div><button className="secondary" onClick={() => setDiscardConflictOpen(true)}>{t("useServerDraft")}</button><button className="primary" onClick={onRetryConflict}>{t("retryLocalDraft")}</button></div></section>}
     <section className="lorebook-settings"><h2>{t("lorebookSettings")}</h2><div className="lorebook-settings-grid"><label>{t("lorebookName")}<input value={value.name ?? ""} onFocus={() => contextFor("name", value.name ?? null)} onChange={(event) => updateBook("name", event.target.value)} /></label><label>{t("scanDepth")}<input type="number" min="0" value={value.scan_depth ?? ""} onChange={(event) => updateBook("scan_depth", event.target.value === "" ? null : Number(event.target.value))} /></label><label>{t("tokenBudget")}<input type="number" min="0" value={value.token_budget ?? ""} onChange={(event) => updateBook("token_budget", event.target.value === "" ? null : Number(event.target.value))} /></label><label className="lorebook-check"><input type="checkbox" checked={value.recursive_scanning ?? false} onChange={(event) => updateBook("recursive_scanning", event.target.checked)} />{t("recursiveScanning")}</label></div><label className="lorebook-description">{t("description")}<textarea rows={3} value={value.description ?? ""} onFocus={() => contextFor("description", value.description ?? null)} onChange={(event) => updateBook("description", event.target.value)} /></label></section>
     <section className="lorebook-tools"><div className="activation-tester"><h2>{t("activationTester")}</h2><p>{t("activationTesterHint")}</p><textarea rows={4} value={testText} onChange={(event) => setTestText(event.target.value)} placeholder={t("activationTestPlaceholder")} /><div><strong>{t("activatedEntries")}</strong><span>{activeEntries.size ? [...activeEntries].map((index) => value.entries[index].name?.trim() || `${t("entry")} ${index + 1}`).join(", ") : t("noneActivated")}</span></div></div><div className="lorebook-diagnostics"><h2>{t("lorebookDiagnostics")}</h2><p>{diagnostics.length ? t("diagnosticsFound") : t("noLorebookProblems")}</p>{diagnostics.length > 0 && <ul>{diagnostics.map((issue, index) => <li className={issue.level} key={`${issue.entry}-${issue.message}-${index}`}><button onClick={() => setSelectedKey(entryKeys[issue.entry])}>{t("entry")} {issue.entry + 1}: {t(issue.message)}</button></li>)}</ul>}</div></section>
     <div className="lorebook-workspace"><aside className="lorebook-entry-list"><header><div><h2>{t("entries")}</h2><span>{value.entries.length}</span></div><button className="primary" onClick={addEntry}>{t("addEntry")}</button></header>{value.entries.length === 0 ? <p>{t("noLoreEntries")}</p> : <div>{value.entries.map((entry, index) => <button key={entryKeys[index]} className={`${selectedKey === entryKeys[index] ? "active" : ""} ${activeEntries.has(index) ? "activated" : ""}`} onClick={() => { setSelectedKey(entryKeys[index]); contextFor(`entries.${index}.content`, entry.content || null); }}><strong>{entry.name?.trim() || entry.comment?.trim() || `${t("entry")} ${index + 1}`}</strong><small>{entry.constant ? t("constantEntry") : entry.keys.length ? entry.keys.join(", ") : t("noKeys")}</small><span>{activeEntries.has(index) ? t("activated") : entry.enabled ? t("enabled") : t("disabled")}</span></button>)}</div>}</aside>
@@ -128,5 +134,6 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
     </div>
     <div className="lorebook-save-bar"><span role="status">{status === "saved" ? t("lorebookSaved") : status === "error" ? t("lorebookSaveError") : dirty ? t("unsavedChanges") : ""}</span><button className="primary" onClick={onSave} disabled={!dirty || status === "saving"}>{status === "saving" ? t("saving") : t("saveLorebook")}</button></div>
     {pendingDelete && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingDelete(null); }}><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("deleteEntryTitle")}</h2><p>{t("deleteEntryBody")}</p><div><button className="secondary" autoFocus onClick={() => setPendingDelete(null)}>{t("cancel")}</button><button className="danger-button" onClick={remove}>{t("deleteEntry")}</button></div></section></div>}
+    {discardConflictOpen && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setDiscardConflictOpen(false); }}><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("useServerDraftTitle")}</h2><p>{t("useServerDraftBody")}</p><div><button className="secondary" autoFocus onClick={() => setDiscardConflictOpen(false)}>{t("cancel")}</button><button className="danger-button" onClick={() => { setDiscardConflictOpen(false); onUseServerDraft?.(); }}>{t("useServerDraft")}</button></div></section></div>}
   </section>;
 }

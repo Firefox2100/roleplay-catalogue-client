@@ -65,13 +65,52 @@ struct CatalogueResource {
     id: String,
     resource_type: String,
     author_id: String,
+    #[serde(default)]
+    co_author_ids: Vec<String>,
     metadata: ResourceMetadata,
     draft_data_id: Option<String>,
     cover_image_resource_id: Option<String>,
+    #[serde(default)]
+    linked_lorebooks: Vec<LorebookReference>,
     created_at: String,
     updated_at: String,
     #[serde(default)]
     author_username: String,
+    #[serde(default)]
+    revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct LorebookReference {
+    resource_id: String,
+    version_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceVersionSummary {
+    id: String,
+    resource_id: String,
+    version: String,
+    version_number: u64,
+    visibility: String,
+    cover_image_resource_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkableLorebook {
+    resource: CatalogueResource,
+    versions: Vec<ResourceVersionSummary>,
+    draft_editable: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceSaveOutcome {
+    saved: Option<CatalogueResource>,
+    current: Option<CatalogueResource>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,6 +129,15 @@ struct CharacterDraft {
     created_at: String,
     updated_at: String,
     data: serde_json::Value,
+    #[serde(default)]
+    revision: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DraftSaveOutcome {
+    saved: Option<CharacterDraft>,
+    current: Option<CharacterDraft>,
 }
 
 #[derive(Debug, Serialize)]
@@ -369,6 +417,16 @@ async fn catalogue_response(
     path: &str,
     body: Option<serde_json::Value>,
 ) -> Result<CatalogueResponse, String> {
+    catalogue_response_if_match(app, method, path, body, None).await
+}
+
+async fn catalogue_response_if_match(
+    app: &AppHandle,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+    expected_revision: Option<u64>,
+) -> Result<CatalogueResponse, String> {
     let config = read_config(app)?;
     if config.catalogue.api_key.trim().is_empty() {
         return Err("Catalogue API key is not configured".into());
@@ -387,6 +445,9 @@ async fn catalogue_response(
             .bearer_auth(config.catalogue.api_key.trim());
         if let Some(value) = &body {
             request = request.json(value);
+        }
+        if let Some(revision) = expected_revision {
+            request = request.header(reqwest::header::IF_MATCH, format!("\"{revision}\""));
         }
         let response = request.send().await.map_err(|error| {
             eprintln!(
@@ -509,6 +570,229 @@ async fn fetch_character_cover(
         media_type,
         data: BASE64.encode(response.body),
     }))
+}
+
+async fn fetch_catalogue_image(app: &AppHandle, path: &str) -> Result<CoverImage, String> {
+    let response = catalogue_response(app, reqwest::Method::GET, path, None).await?;
+    if !response.status.is_success() {
+        return Err(format!(
+            "Catalogue request {} returned {} for {}: {}",
+            response.request_id,
+            response.status,
+            response.url,
+            response_excerpt(&response.body),
+        ));
+    }
+    let media_type = response
+        .content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if !media_type.starts_with("image/") {
+        return Err("Catalogue response was not an image".into());
+    }
+    Ok(CoverImage {
+        media_type,
+        data: BASE64.encode(response.body),
+    })
+}
+
+#[tauri::command]
+async fn fetch_image_content(
+    app: AppHandle,
+    image_resource_id: String,
+) -> Result<CoverImage, String> {
+    fetch_catalogue_image(&app, &format!("/images/{image_resource_id}/content")).await
+}
+
+#[tauri::command]
+async fn list_owned_images(app: AppHandle) -> Result<ResourceList, String> {
+    let user: CurrentUser = catalogue_json(&app, reqwest::Method::GET, "/auth/me", None).await?;
+    let mut resources: ResourceList = catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        "/resources?resourceType=core%2Fimage&limit=24",
+        None,
+    )
+    .await?;
+    resources
+        .items
+        .retain(|resource| resource.author_id == user.id);
+    Ok(resources)
+}
+
+async fn upload_cover_multipart(
+    app: &AppHandle,
+    resource_id: &str,
+    file_name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    const MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return Err("Cover image must be between 1 byte and 25 MiB".into());
+    }
+    if !media_type.starts_with("image/") {
+        return Err("Cover file must be an image".into());
+    }
+    let config = read_config(app)?;
+    let urls = catalogue_urls(&config, &format!("/images/covers/{resource_id}"))?;
+    let client = reqwest::Client::builder()
+        .https_only(false)
+        .build()
+        .map_err(|error| error.to_string())?;
+    for (index, url) in urls.iter().enumerate() {
+        let part = reqwest::multipart::Part::bytes(bytes.clone())
+            .file_name(file_name.clone())
+            .mime_str(&media_type)
+            .map_err(|error| error.to_string())?;
+        let response = client
+            .post(url)
+            .bearer_auth(config.catalogue.api_key.trim())
+            .multipart(reqwest::multipart::Form::new().part("file", part))
+            .send()
+            .await
+            .map_err(|error| format!("Catalogue cover upload failed: {error}"))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| format!("Could not read cover upload response: {error}"))?;
+        if index + 1 < urls.len()
+            && matches!(
+                status,
+                reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            )
+        {
+            continue;
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "Catalogue cover upload returned {status}: {}",
+                response_excerpt(&body)
+            ));
+        }
+        return Ok(());
+    }
+    Err("Catalogue cover upload endpoint was not found".into())
+}
+
+#[tauri::command]
+async fn upload_resource_cover(
+    app: AppHandle,
+    resource_id: String,
+    file_name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+) -> Result<CatalogueResource, String> {
+    upload_cover_multipart(&app, &resource_id, file_name, media_type, bytes).await?;
+    catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/resources/{resource_id}"),
+        None,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn select_resource_cover(
+    app: AppHandle,
+    resource_id: String,
+    image_resource_id: String,
+) -> Result<CatalogueResource, String> {
+    catalogue_json(
+        &app,
+        reqwest::Method::PUT,
+        &format!("/images/covers/{resource_id}"),
+        Some(serde_json::json!({ "imageResourceId": image_resource_id })),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn list_linkable_lorebooks(app: AppHandle) -> Result<Vec<LinkableLorebook>, String> {
+    let user: CurrentUser = catalogue_json(&app, reqwest::Method::GET, "/auth/me", None).await?;
+    let resources: ResourceList = catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        "/resources?resourceType=sillytavern%2Florebook&limit=100",
+        None,
+    )
+    .await?;
+    let mut result = Vec::with_capacity(resources.items.len());
+    for resource in resources.items {
+        let versions: Vec<ResourceVersionSummary> = catalogue_json(
+            &app,
+            reqwest::Method::GET,
+            &format!("/versions/resource/{}?limit=100", resource.id),
+            None,
+        )
+        .await?;
+        let draft_editable = resource.draft_data_id.is_some()
+            && (resource.author_id == user.id || resource.co_author_ids.contains(&user.id));
+        result.push(LinkableLorebook {
+            resource,
+            versions,
+            draft_editable,
+        });
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn save_linked_lorebooks(
+    app: AppHandle,
+    resource_id: String,
+    linked_lorebooks: Vec<LorebookReference>,
+    expected_revision: u64,
+) -> Result<ResourceSaveOutcome, String> {
+    let resource: CatalogueResource = catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/resources/{resource_id}"),
+        None,
+    )
+    .await?;
+    if resource.resource_type != "sillytavern/character" {
+        return Err("Only character cards can link lorebooks".into());
+    }
+    let response = catalogue_response_if_match(
+        &app,
+        reqwest::Method::PUT,
+        &format!("/resources/{resource_id}"),
+        Some(serde_json::json!({
+            "name": resource.metadata.name,
+            "description": resource.metadata.description,
+            "language": resource.metadata.language,
+            "visibility": resource.metadata.visibility,
+            "tags": resource.metadata.tags,
+            "linkedLorebooks": linked_lorebooks,
+        })),
+        Some(expected_revision),
+    )
+    .await?;
+    if response.status == reqwest::StatusCode::PRECONDITION_FAILED {
+        let payload: serde_json::Value = serde_json::from_slice(&response.body)
+            .map_err(|error| format!("Catalogue conflict response was not valid JSON: {error}"))?;
+        let current = serde_json::from_value(
+            payload
+                .pointer("/detail/current")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|error| format!("Catalogue conflict did not include the resource: {error}"))?;
+        return Ok(ResourceSaveOutcome {
+            saved: None,
+            current: Some(current),
+        });
+    }
+    Ok(ResourceSaveOutcome {
+        saved: Some(decode_catalogue_json(response)?),
+        current: None,
+    })
 }
 
 fn local_id(prefix: &str) -> String {
@@ -1254,7 +1538,8 @@ async fn save_character_draft(
     app: AppHandle,
     resource_id: String,
     data: serde_json::Value,
-) -> Result<CharacterDraft, String> {
+    expected_revision: u64,
+) -> Result<DraftSaveOutcome, String> {
     let resource_path = format!("/resources/{resource_id}");
     let resource: CatalogueResource =
         catalogue_json(&app, reqwest::Method::GET, &resource_path, None).await?;
@@ -1262,11 +1547,14 @@ async fn save_character_draft(
         return Err("Selected resource is not a character card".into());
     }
     let path = format!("/resources/{resource_id}/data");
-    catalogue_json(
+    save_draft_if_match(
         &app,
-        reqwest::Method::PUT,
         &path,
-        Some(serde_json::json!({ "data": data })),
+        data,
+        resource
+            .draft_data_id
+            .is_some()
+            .then_some(expected_revision),
     )
     .await
 }
@@ -1276,7 +1564,8 @@ async fn save_lorebook_draft(
     app: AppHandle,
     resource_id: String,
     data: serde_json::Value,
-) -> Result<CharacterDraft, String> {
+    expected_revision: u64,
+) -> Result<DraftSaveOutcome, String> {
     let resource_path = format!("/resources/{resource_id}");
     let resource: CatalogueResource =
         catalogue_json(&app, reqwest::Method::GET, &resource_path, None).await?;
@@ -1284,13 +1573,58 @@ async fn save_lorebook_draft(
         return Err("Selected resource is not a lorebook".into());
     }
     let path = format!("/resources/{resource_id}/data");
-    catalogue_json(
+    save_draft_if_match(
         &app,
-        reqwest::Method::PUT,
         &path,
-        Some(serde_json::json!({ "data": data })),
+        data,
+        resource
+            .draft_data_id
+            .is_some()
+            .then_some(expected_revision),
     )
     .await
+}
+
+async fn save_draft_if_match(
+    app: &AppHandle,
+    path: &str,
+    data: serde_json::Value,
+    expected_revision: Option<u64>,
+) -> Result<DraftSaveOutcome, String> {
+    let response = catalogue_response_if_match(
+        app,
+        reqwest::Method::PUT,
+        path,
+        Some(serde_json::json!({ "data": data })),
+        expected_revision,
+    )
+    .await?;
+    if response.status == reqwest::StatusCode::PRECONDITION_FAILED {
+        let current = decode_current_draft(&response.body)?;
+        return Ok(DraftSaveOutcome {
+            saved: None,
+            current: Some(current),
+        });
+    }
+    let saved = decode_catalogue_json(response)?;
+    Ok(DraftSaveOutcome {
+        saved: Some(saved),
+        current: None,
+    })
+}
+
+fn decode_current_draft(body: &[u8]) -> Result<CharacterDraft, String> {
+    let payload: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("Catalogue conflict response was not valid JSON: {error}"))?;
+    serde_json::from_value(
+        payload
+            .pointer("/detail/current")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(|error| {
+        format!("Catalogue conflict response did not include the current draft: {error}")
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1301,7 +1635,13 @@ pub fn run() {
             load_bootstrap,
             save_configuration,
             list_owned_resources,
+            list_owned_images,
+            list_linkable_lorebooks,
             fetch_character_cover,
+            fetch_image_content,
+            upload_resource_cover,
+            select_resource_cover,
+            save_linked_lorebooks,
             select_resource,
             create_resource,
             save_character_draft,
@@ -1319,9 +1659,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        assistant_instructions, catalogue_urls, initialise_database, looks_like_frontend_html,
-        lorebook_proposal_kind, model_envelope_errors, parse_model_envelope, response_excerpt,
-        AppConfig,
+        assistant_instructions, catalogue_urls, decode_current_draft, initialise_database,
+        looks_like_frontend_html, lorebook_proposal_kind, model_envelope_errors,
+        parse_model_envelope, response_excerpt, AppConfig, CatalogueResource,
     };
     use rusqlite::Connection;
 
@@ -1356,6 +1696,42 @@ mod tests {
         let excerpt = response_excerpt(format!("first\n{}", "x".repeat(600)).as_bytes());
         assert!(!excerpt.contains('\n'));
         assert!(excerpt.ends_with('…'));
+    }
+
+    #[test]
+    fn decodes_the_current_draft_from_a_precondition_failure() {
+        let current = decode_current_draft(
+            br#"{"detail":{"current":{"id":"draft","resourceId":"resource","resourceVersionId":null,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","revision":7,"data":{"name":"Server"}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(current.revision, 7);
+        assert_eq!(current.data["name"], "Server");
+
+        assert!(decode_current_draft(br#"{"detail":"stale"}"#).is_err());
+    }
+
+    #[test]
+    fn decodes_linked_lorebooks_from_resource_metadata() {
+        let resource: CatalogueResource = serde_json::from_value(serde_json::json!({
+            "id": "character",
+            "resourceType": "sillytavern/character",
+            "authorId": "owner",
+            "coAuthorIds": ["editor"],
+            "metadata": { "name": "Card", "description": "", "language": "en-uk", "visibility": "private", "tags": [] },
+            "draftDataId": "draft",
+            "coverImageResourceId": "cover",
+            "linkedLorebooks": [{ "resourceId": "book", "versionId": "release" }],
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+            "revision": 4
+        }))
+        .unwrap();
+        assert_eq!(resource.co_author_ids, ["editor"]);
+        assert_eq!(resource.linked_lorebooks[0].resource_id, "book");
+        assert_eq!(
+            resource.linked_lorebooks[0].version_id.as_deref(),
+            Some("release")
+        );
     }
 
     #[test]

@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import "./AppLayout.css";
+import { AssetsPage } from "./AssetsPage";
 import { AssistantDrawer } from "./AssistantDrawer";
 import { saveCharacterDraft, saveLorebookDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
+import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
 import { CharacterFoundationPage } from "./CharacterFoundationPage";
 import { DialogueVoicePage } from "./DialogueVoicePage";
+import { ExtensionsPage } from "./ExtensionsPage";
 import { MetadataPage } from "./MetadataPage";
+import { MvuComposerPage } from "./MvuComposerPage";
 import { LorebookEditorPage } from "./LorebookEditorPage";
+import { LinkedLorebooksPage } from "./LinkedLorebooksPage";
 import { translate, type MessageKey } from "./i18n";
 import { OverviewPage } from "./OverviewPage";
 import { ResourcePicker } from "./ResourcePicker";
 import { RuntimeInstructionsPage } from "./RuntimeInstructionsPage";
 import { ScenarioOpeningsPage } from "./ScenarioOpeningsPage";
 import { SecretInput } from "./SecretInput";
-import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, EditorContext, LorebookData, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedResource, WorldOverview } from "./types";
+import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, CharacterDraft, EditorContext, LorebookData, LorebookDraft, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedResource, WorldOverview } from "./types";
 import { WorldOverviewPage } from "./WorldOverviewPage";
+import { threeWayMerge, type MergeConflicts } from "./threeWayMerge";
 import "./Theme.css";
 
-type Page = "resources" | "overview" | "world" | "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "lorebook" | "settings";
+type Page = "resources" | "overview" | "world" | "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "lorebook" | "linked-lorebooks" | "extensions" | "mvu" | "assets" | "settings";
 const desktopDefault = () => window.matchMedia("(min-width: 721px)").matches;
 const fallback: BootstrapData = { version: "0.1.0", config: { locale: "en-GB", appearance: "system", llm: { provider: "openai", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4.1", contextWindow: 128000, maxOutputTokens: 4096, temperature: 0.7 }, catalogue: { baseUrl: "", apiKey: "" } } };
 const defaults: Record<ProviderKind, { baseUrl: string; model: string }> = { openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1" }, anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-5" }, ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2" }, "openai-compatible": { baseUrl: "", model: "" } };
@@ -50,6 +56,8 @@ function App() {
   const [worldStatus, setWorldStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardStatus, setCardStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardDirty, setCardDirty] = useState(false);
+  const [cardBase, setCardBase] = useState<CharacterDraft | LorebookDraft | null>(null);
+  const [mergeConflict, setMergeConflict] = useState<{ kind: "character" | "lorebook"; merged: CharacterCardV3Data | LorebookData; conflicts: MergeConflicts; remoteRevision: number; remoteData: CharacterCardV3Data | LorebookData } | null>(null);
   const [assistantPrompt, setAssistantPrompt] = useState<string | null>(null);
   const [editorContext, setEditorContext] = useState<EditorContext>({ path: null, selectedText: null, cursor: null });
   const t = useMemo(() => (key: MessageKey) => translate(draft.locale, key), [draft.locale]);
@@ -81,8 +89,8 @@ function App() {
   const provider = (kind: ProviderKind) => setDraft((current) => ({ ...current, llm: { ...current.llm, provider: kind, ...defaults[kind] } }));
   const go = (next: Page) => { setPage(next); if (!desktopDefault()) setLeftOpen(false); };
   const save = async () => { setStatus("saving"); try { const config = await saveConfiguration(draft); setDraft(config); setData((current) => ({ ...current, config })); setStatus("saved"); } catch { setStatus("error"); } };
-  const selectResource = (value: SelectedResource) => { setSelected(value); setCardDirty(false); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage(value.resource.resourceType === "sillytavern/lorebook" ? "lorebook" : "overview"); if (!desktopDefault()) setLeftOpen(false); };
-  const changeResource = () => { setSelected(null); setWorldOverview(null); setCardDirty(false); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage("resources"); };
+  const selectResource = (value: SelectedResource) => { setSelected(value); setCardBase(value.draft); setCardDirty(false); setMergeConflict(null); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage(value.resource.resourceType === "sillytavern/lorebook" ? "lorebook" : "overview"); if (!desktopDefault()) setLeftOpen(false); };
+  const changeResource = () => { setSelected(null); setCardBase(null); setWorldOverview(null); setCardDirty(false); setMergeConflict(null); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage("resources"); };
   const persistWorldOverview = async (next = worldOverview) => {
     if (!next) return;
     setWorldStatus("saving");
@@ -139,33 +147,63 @@ function App() {
     setCardDirty(true);
     setCardStatus("idle");
   };
+  const persistCharacter = async (data: CharacterCardV3Data, expectedRevision: number, mergeBase = (cardBase as CharacterDraft | null)?.data ?? data) => {
+    if (!selected || selected.resource.resourceType !== "sillytavern/character") return;
+    const outcome = await saveCharacterDraft(selected.resource.id, data, expectedRevision);
+    if (!outcome.saved && outcome.current) {
+      const withRemote = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>);
+      if (Object.keys(withRemote.conflicts).length === 0) return persistCharacter(withRemote.merged as unknown as CharacterCardV3Data, outcome.current.revision, outcome.current.data);
+      setMergeConflict({ kind: "character", merged: withRemote.merged as unknown as CharacterCardV3Data, conflicts: withRemote.conflicts, remoteRevision: outcome.current.revision, remoteData: outcome.current.data });
+      setCardStatus("error");
+      return;
+    }
+    if (!outcome.saved) throw new Error("Catalogue save returned no draft");
+    const saved = outcome.saved;
+    setSelected((current) => current ? { ...current, draft: saved } as SelectedCharacter : current);
+    setCardBase(saved);
+    setCardDirty(false);
+    setMergeConflict(null);
+    setCardStatus("saved");
+  };
   const saveCard = async () => {
     if (!selected?.draft || selected.resource.resourceType !== "sillytavern/character" || !cardDirty) return;
     setCardStatus("saving");
     try {
-      const saved = await saveCharacterDraft(selected.resource.id, selected.draft.data as CharacterCardV3Data);
-      setSelected((current) => current ? { ...current, draft: saved } : current);
-      setCardDirty(false);
-      setCardStatus("saved");
+      await persistCharacter(selected.draft.data as CharacterCardV3Data, (cardBase as CharacterDraft | null)?.revision ?? selected.draft.revision);
     } catch { setCardStatus("error"); }
   };
   const updateStandaloneLorebook = (data: LorebookData) => {
     setSelected((current) => {
       if (!current || current.resource.resourceType !== "sillytavern/lorebook") return current;
-      const draft = current.draft ? { ...current.draft, data } : { id: "", resourceId: current.resource.id, resourceVersionId: null, createdAt: "", updatedAt: "", data };
+      const draft = current.draft ? { ...current.draft, data } : { id: "", resourceId: current.resource.id, resourceVersionId: null, createdAt: "", updatedAt: "", data, revision: 0 };
       return { ...current, draft } as SelectedLorebook;
     });
     setCardDirty(true);
     setCardStatus("idle");
   };
+  const persistLorebook = async (data: LorebookData, expectedRevision: number, mergeBase = (cardBase as LorebookDraft | null)?.data ?? data) => {
+    if (!selected || selected.resource.resourceType !== "sillytavern/lorebook") return;
+    const outcome = await saveLorebookDraft(selected.resource.id, data, expectedRevision);
+    if (!outcome.saved && outcome.current) {
+      const result = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>);
+      if (Object.keys(result.conflicts).length === 0) return persistLorebook(result.merged as unknown as LorebookData, outcome.current.revision, outcome.current.data);
+      setMergeConflict({ kind: "lorebook", merged: result.merged as unknown as LorebookData, conflicts: result.conflicts, remoteRevision: outcome.current.revision, remoteData: outcome.current.data });
+      setCardStatus("error");
+      return;
+    }
+    if (!outcome.saved) throw new Error("Catalogue save returned no draft");
+    const saved = outcome.saved;
+    setSelected((current) => current ? { ...current, draft: saved } as SelectedLorebook : current);
+    setCardBase(saved);
+    setCardDirty(false);
+    setMergeConflict(null);
+    setCardStatus("saved");
+  };
   const saveStandaloneLorebook = async () => {
     if (!selected?.draft || selected.resource.resourceType !== "sillytavern/lorebook" || !cardDirty) return;
     setCardStatus("saving");
     try {
-      const saved = await saveLorebookDraft(selected.resource.id, selected.draft.data as LorebookData);
-      setSelected((current) => current ? { ...current, draft: saved } as SelectedLorebook : current);
-      setCardDirty(false);
-      setCardStatus("saved");
+      await persistLorebook(selected.draft.data as LorebookData, (cardBase as LorebookDraft | null)?.revision ?? selected.draft.revision);
     } catch { setCardStatus("error"); }
   };
   const mobile = !desktopDefault();
@@ -202,15 +240,20 @@ function App() {
         <button className={page === "dialogue" ? "active" : ""} onClick={() => go("dialogue")}><span>≋</span>{t("dialogueVoice")}</button>
         <button className={page === "runtime" ? "active" : ""} onClick={() => go("runtime")}><span>⌁</span>{t("runtimeInstructions")}</button>
         <button className={page === "metadata" ? "active" : ""} onClick={() => go("metadata")}><span>ⓘ</span>{t("metadata")}</button>
-        <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("embeddedLorebook")}</button></>}
+        <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("embeddedLorebook")}</button>
+        <button className={page === "linked-lorebooks" ? "active" : ""} onClick={() => go("linked-lorebooks")}><span>⛓</span>{t("linkedLorebooks")}</button>
+        <button className={page === "extensions" ? "active" : ""} onClick={() => go("extensions")}><span>⌘</span>{t("extensionsAndScripts")}</button>
+        <button className={page === "mvu" ? "active" : ""} onClick={() => go("mvu")}><span>↻</span>{t("mvuComposer")}</button>
+        <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><span>▧</span>{t("assetsAndCover")}</button></>}
         {standaloneLorebook && <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("lorebookEditor")}</button>}
+        {standaloneLorebook && <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><span>▧</span>{t("assetsAndCover")}</button>}
         {standaloneLorebook && <button onClick={changeResource}><span>⇄</span>{t("changeResource")}</button>}
       </nav>
       <footer className="drawer-footer"><div><strong>{t("appName")}</strong><small>v{data.version}</small></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => go("settings")} aria-label={t("openSettings")} title={t("settings")}>⚙</button></footer>
     </aside>
 
     <main className="page">
-      {page === "overview" && selectedCharacter && <OverviewPage selected={selectedCharacter} context={editorContext} onContext={setEditorContext} onChangeResource={changeResource} t={t} />}
+      {page === "overview" && selectedCharacter && <OverviewPage selected={selectedCharacter} conflict={null} context={editorContext} onContext={setEditorContext} onNavigate={go} onChangeResource={changeResource} onRetryConflict={() => undefined} onUseServerDraft={() => undefined} t={t} />}
       {page === "world" && selectedCharacter && worldOverview && <WorldOverviewPage value={worldOverview} status={worldStatus} context={editorContext} onChange={(value) => { setWorldOverview(value); setWorldStatus("idle"); }} onContext={setEditorContext} onSave={() => void persistWorldOverview()} onDraft={() => { setEditorContext({ path: "worldOverview.summary", selectedText: worldOverview.summary || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftWorldPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
       {page === "world" && selectedCharacter && !worldOverview && <p className="loading-text">{t("loading")}</p>}
       {page === "foundation" && selectedCharacter && <CharacterFoundationPage selected={selectedCharacter} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "description", selectedText: selectedCharacter.draft?.data.description || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftFoundationPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
@@ -220,10 +263,19 @@ function App() {
       {page === "metadata" && selectedCharacter && <MetadataPage selected={selectedCharacter} worldOverview={worldOverview} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onSuggestTags={() => { const contentLocale = selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB"; setEditorContext({ path: "tags", selectedText: selectedCharacter.draft?.data.tags.join(", ") || null, cursor: null }); setAssistantPrompt(`${translate(contentLocale, "suggestMetadataTagsPrompt")}\n\n${translate(contentLocale, "metadataTagSources")}: ${JSON.stringify(selectedCharacter.resource.metadata.tags)}`); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
       {page === "lorebook" && selectedCharacter && <LorebookEditorPage value={selectedCharacter.draft?.data.character_book ?? null} fallbackName={selectedCharacter.resource.metadata.name} embedded dirty={cardDirty} status={cardStatus} onChange={(book) => selectedCharacter.draft && updateCard({ ...selectedCharacter.draft.data, character_book: book })} onContext={setEditorContext} onDraft={() => { setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftLoreEntryPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} onSave={() => void saveCard()} t={t} />}
       {page === "lorebook" && standaloneLorebook && <LorebookEditorPage value={standaloneLorebook.draft?.data ?? null} fallbackName={standaloneLorebook.resource.metadata.name} embedded={false} dirty={cardDirty} status={cardStatus} onChange={updateStandaloneLorebook} onContext={setEditorContext} onDraft={() => { setAssistantPrompt(translate(standaloneLorebook.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftLoreEntryPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} onSave={() => void saveStandaloneLorebook()} t={t} />}
+      {page === "extensions" && selectedCharacter && <ExtensionsPage selected={selectedCharacter} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} t={t} />}
+      {page === "mvu" && selectedCharacter && <MvuComposerPage selected={selectedCharacter} dirty={cardDirty} status={cardStatus} onChange={updateCard} onSave={() => void saveCard()} t={t} />}
+      {page === "linked-lorebooks" && selectedCharacter && <LinkedLorebooksPage selected={selectedCharacter} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} t={t} />}
+      {page === "assets" && <AssetsPage selected={selected} dirty={cardDirty} status={cardStatus} onCardChange={selectedCharacter ? updateCard : null} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} onSave={() => void saveCard()} t={t} />}
       {page === "settings" && <SettingsPage draft={draft} status={status} llm={llm} provider={provider} setDraft={setDraft} save={save} t={t} />}
     </main>
 
     <AssistantDrawer open={rightOpen} onClose={() => setRightOpen(false)} selected={selected} worldOverview={selectedCharacter ? worldOverview : null} context={editorContext} draftPrompt={assistantPrompt} onDraftPromptUsed={consumeAssistantPrompt} providerConfigured={Boolean(data.config.llm.baseUrl && data.config.llm.model && (data.config.llm.provider === "ollama" || data.config.llm.apiKey))} onAccept={acceptProposal} onClearContext={() => setEditorContext({ path: null, selectedText: null, cursor: null })} t={t} />
+    {mergeConflict && <ConflictResolutionDialog conflicts={mergeConflict.conflicts} merged={mergeConflict.merged as unknown as Record<string, unknown>} saving={cardStatus === "saving"} onCancel={() => setMergeConflict(null)} onApply={(resolved) => {
+      setCardStatus("saving");
+      const task = mergeConflict.kind === "character" ? persistCharacter(resolved as unknown as CharacterCardV3Data, mergeConflict.remoteRevision, mergeConflict.remoteData as CharacterCardV3Data) : persistLorebook(resolved as unknown as LorebookData, mergeConflict.remoteRevision, mergeConflict.remoteData as LorebookData);
+      void task.catch(() => setCardStatus("error"));
+    }} t={t} />}
   </div>;
 }
 
