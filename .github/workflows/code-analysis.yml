@@ -39,7 +39,7 @@ jobs:
         run: npm ci
 
       - name: Run frontend tests with coverage
-        id: frontend-tests
+        id: frontend_tests
         continue-on-error: true
         run: npm run test:ci
 
@@ -49,7 +49,9 @@ jobs:
           python-version: "3.12"
 
       - name: Convert frontend test results for SonarQube
+        id: frontend_sonar_report
         if: always() && hashFiles('test-results.xml') != ''
+        continue-on-error: true
         run: python scripts/junit_to_sonar.py test-results.xml test-results-sonar.xml
 
       - name: Install Linux build dependencies
@@ -72,26 +74,39 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Run Rust tests with coverage
-        id: rust-tests
+        id: rust_tests
         continue-on-error: true
         working-directory: src-tauri
         run: cargo llvm-cov --lcov --output-path ../coverage/rust-lcov.info nextest --profile ci
 
       - name: Extract version
-        run: echo "VERSION=$(node -p \"require('./package.json').version\")" >> "$GITHUB_ENV"
+        id: project_version
+        continue-on-error: true
+        run: node -e 'process.stdout.write(`VERSION=${require("./package.json").version}\n`)' >> "$GITHUB_ENV"
 
       - name: SonarQube Scan
-        if: steps.frontend-tests.outcome == 'success' && steps.rust-tests.outcome == 'success' && env.SONAR_TOKEN != ''
+        if: always() && steps.frontend_tests.outcome == 'success' && steps.frontend_sonar_report.outcome == 'success' && steps.rust_tests.outcome == 'success' && steps.project_version.outcome == 'success' && env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995
         with:
           args: >
             -Dsonar.projectVersion=${{ env.VERSION }}
 
-      - name: Publish test results
+      - name: Publish frontend test results
         uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16
-        if: always() && hashFiles('test-results.xml', 'src-tauri/target/nextest/ci/junit.xml') != ''
+        if: always() && hashFiles('test-results.xml') != ''
         with:
-          report_paths: "test-results.xml,src-tauri/target/nextest/ci/junit.xml"
+          check_name: Frontend test results
+          report_paths: test-results.xml
+          include_passed: true
+          require_tests: true
+
+      - name: Publish Rust test results
+        uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16
+        if: always() && hashFiles('src-tauri/target/nextest/ci/junit.xml') != ''
+        with:
+          check_name: Rust test results
+          report_paths: src-tauri/target/nextest/ci/junit.xml
+          include_passed: true
           require_tests: true
 
       - name: Publish frontend coverage
@@ -112,11 +127,17 @@ jobs:
             coverage/
 
       - name: Report skipped SonarQube scan
-        if: steps.frontend-tests.outcome == 'success' && steps.rust-tests.outcome == 'success' && env.SONAR_TOKEN == ''
+        if: always() && steps.frontend_tests.outcome == 'success' && steps.frontend_sonar_report.outcome == 'success' && steps.rust_tests.outcome == 'success' && steps.project_version.outcome == 'success' && env.SONAR_TOKEN == ''
         run: echo "Tests passed, but SONAR_TOKEN is unavailable; reports were published without running the scan."
 
+      - name: Enforce analysis preparation
+        if: always() && ((steps.frontend_tests.outcome == 'success' && steps.frontend_sonar_report.outcome != 'success') || steps.project_version.outcome != 'success')
+        run: |
+          echo "SonarQube input preparation failed. See the preceding step output."
+          exit 1
+
       - name: Enforce test results
-        if: always() && (steps.frontend-tests.outcome != 'success' || steps.rust-tests.outcome != 'success')
+        if: always() && (steps.frontend_tests.outcome != 'success' || steps.rust_tests.outcome != 'success')
         run: |
           echo "One or more test suites failed. See the published test reports."
           exit 1
