@@ -6,7 +6,7 @@ import "./OverviewPage.css";
 
 type FieldKey = "name" | "description" | "personality" | "scenario" | "first_mes" | "mes_example" | "creator_notes" | "system_prompt" | "post_history_instructions" | "creator" | "character_version";
 type ReviewPage = "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "lorebook" | "extensions" | "assets";
-type ReviewIssue = { severity: "error" | "warning"; title: MessageKey; detail: string; page: ReviewPage; path: string };
+export type ReviewIssue = { severity: "error" | "warning"; title: MessageKey; detail: string; page: ReviewPage; path: string };
 
 const fields: Array<{ key: FieldKey; label: MessageKey }> = [
   { key: "name", label: "name" }, { key: "description", label: "description" },
@@ -34,7 +34,7 @@ function arrayValue(value: JsonValue | undefined): JsonValue[] {
   return Array.isArray(value) ? value : [];
 }
 
-function cardStatistics(card: CharacterCardV3Data) {
+export function cardStatistics(card: CharacterCardV3Data) {
   const fieldRows = fields.map(({ key, label }) => {
     const rawValue = card[key];
     const value = typeof rawValue === "string" ? rawValue : "";
@@ -59,7 +59,7 @@ function cardStatistics(card: CharacterCardV3Data) {
 
 const validRegex = (pattern: string) => { try { const literal = pattern.startsWith("/") ? pattern.match(/^\/(.*)\/([a-z]*)$/s) : null; new RegExp(literal ? literal[1] : pattern, literal ? literal[2] : ""); return true; } catch { return false; } };
 
-function reviewCard(card: CharacterCardV3Data, t: (key: MessageKey) => string): ReviewIssue[] {
+export function reviewCard(card: CharacterCardV3Data, t: (key: MessageKey) => string): ReviewIssue[] {
   const issues: ReviewIssue[] = [];
   const required: Array<[FieldKey, MessageKey, ReviewPage]> = [["name", "name", "foundation"], ["description", "description", "foundation"], ["first_mes", "firstMessage", "scenes"]];
   required.forEach(([key, label, page]) => { if (!card[key]?.trim()) issues.push({ severity: "error", title: "requiredFieldEmpty", detail: t(label), page, path: key }); });

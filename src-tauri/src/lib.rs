@@ -438,6 +438,16 @@ async fn catalogue_response_if_match(
     expected_revision: Option<u64>,
 ) -> Result<CatalogueResponse, String> {
     let config = read_config(app)?;
+    catalogue_response_with_config(&config, method, path, body, expected_revision).await
+}
+
+async fn catalogue_response_with_config(
+    config: &AppConfig,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+    expected_revision: Option<u64>,
+) -> Result<CatalogueResponse, String> {
     if config.catalogue.api_key.trim().is_empty() {
         return Err("Catalogue API key is not configured".into());
     }
@@ -445,7 +455,7 @@ async fn catalogue_response_if_match(
         .https_only(false)
         .build()
         .map_err(|e| e.to_string())?;
-    let urls = catalogue_urls(&config, path)?;
+    let urls = catalogue_urls(config, path)?;
     for (index, url) in urls.iter().enumerate() {
         let request_id = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let started = Instant::now();
@@ -723,8 +733,17 @@ async fn select_resource_cover(
 }
 
 #[tauri::command]
-async fn clear_resource_cover(app: AppHandle, resource_id: String) -> Result<CatalogueResource, String> {
-    catalogue_json(&app, reqwest::Method::DELETE, &format!("/images/covers/{resource_id}"), None).await
+async fn clear_resource_cover(
+    app: AppHandle,
+    resource_id: String,
+) -> Result<CatalogueResource, String> {
+    catalogue_json(
+        &app,
+        reqwest::Method::DELETE,
+        &format!("/images/covers/{resource_id}"),
+        None,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -734,52 +753,134 @@ async fn save_resource_metadata(
     metadata: ResourceMetadata,
     expected_revision: u64,
 ) -> Result<ResourceSaveOutcome, String> {
-    if metadata.name.trim().is_empty() { return Err("Resource name is required".into()); }
-    let resource: CatalogueResource = catalogue_json(&app, reqwest::Method::GET, &format!("/resources/{resource_id}"), None).await?;
+    if metadata.name.trim().is_empty() {
+        return Err("Resource name is required".into());
+    }
+    let resource: CatalogueResource = catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/resources/{resource_id}"),
+        None,
+    )
+    .await?;
     let response = catalogue_response_if_match(
-        &app, reqwest::Method::PUT, &format!("/resources/{resource_id}"),
+        &app,
+        reqwest::Method::PUT,
+        &format!("/resources/{resource_id}"),
         Some(serde_json::json!({
             "name": metadata.name.trim(), "description": metadata.description.trim(),
             "language": metadata.language, "visibility": metadata.visibility,
             "tags": metadata.tags, "linkedLorebooks": resource.linked_lorebooks,
-        })), Some(expected_revision),
-    ).await?;
+        })),
+        Some(expected_revision),
+    )
+    .await?;
     if response.status == reqwest::StatusCode::PRECONDITION_FAILED {
-        let payload: serde_json::Value = serde_json::from_slice(&response.body).map_err(|e| e.to_string())?;
-        let current = serde_json::from_value(payload.pointer("/detail/current").cloned().unwrap_or_default())
-            .map_err(|e| format!("Catalogue conflict did not include the resource: {e}"))?;
-        return Ok(ResourceSaveOutcome { saved: None, current: Some(current) });
+        let payload: serde_json::Value =
+            serde_json::from_slice(&response.body).map_err(|e| e.to_string())?;
+        let current = serde_json::from_value(
+            payload
+                .pointer("/detail/current")
+                .cloned()
+                .unwrap_or_default(),
+        )
+        .map_err(|e| format!("Catalogue conflict did not include the resource: {e}"))?;
+        return Ok(ResourceSaveOutcome {
+            saved: None,
+            current: Some(current),
+        });
     }
-    Ok(ResourceSaveOutcome { saved: Some(decode_catalogue_json(response)?), current: None })
+    Ok(ResourceSaveOutcome {
+        saved: Some(decode_catalogue_json(response)?),
+        current: None,
+    })
 }
 
 fn exported_file_name(response: &CatalogueResponse, fallback: &str) -> String {
-    let extension = if response.content_type.contains("png") { "png" } else { "json" };
+    let extension = if response.content_type.contains("png") {
+        "png"
+    } else {
+        "json"
+    };
     format!("{}.draft.{extension}", fallback.replace(['/', '\\'], "_"))
 }
 
 #[tauri::command]
-async fn export_resource_draft(app: AppHandle, resource_id: String) -> Result<ExportedDraft, String> {
-    let resource: CatalogueResource = catalogue_json(&app, reqwest::Method::GET, &format!("/resources/{resource_id}"), None).await?;
-    let response = catalogue_response(&app, reqwest::Method::GET, &format!("/versions/draft/{resource_id}/download"), None).await?;
-    if !response.status.is_success() { return Err(format!("Catalogue export failed: {}", response_excerpt(&response.body))); }
-    Ok(ExportedDraft { file_name: exported_file_name(&response, &resource.metadata.name), media_type: response.content_type, data: BASE64.encode(response.body) })
+async fn export_resource_draft(
+    app: AppHandle,
+    resource_id: String,
+) -> Result<ExportedDraft, String> {
+    let resource: CatalogueResource = catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/resources/{resource_id}"),
+        None,
+    )
+    .await?;
+    let response = catalogue_response(
+        &app,
+        reqwest::Method::GET,
+        &format!("/versions/draft/{resource_id}/download"),
+        None,
+    )
+    .await?;
+    if !response.status.is_success() {
+        return Err(format!(
+            "Catalogue export failed: {}",
+            response_excerpt(&response.body)
+        ));
+    }
+    Ok(ExportedDraft {
+        file_name: exported_file_name(&response, &resource.metadata.name),
+        media_type: response.content_type,
+        data: BASE64.encode(response.body),
+    })
 }
 
 #[tauri::command]
-async fn preview_resource_draft(app: AppHandle, resource_id: String) -> Result<serde_json::Value, String> {
-    catalogue_json(&app, reqwest::Method::GET, &format!("/versions/draft/{resource_id}/preview"), None).await
+async fn preview_resource_draft(
+    app: AppHandle,
+    resource_id: String,
+) -> Result<serde_json::Value, String> {
+    catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/versions/draft/{resource_id}/preview"),
+        None,
+    )
+    .await
 }
 
 #[tauri::command]
-async fn list_resource_versions(app: AppHandle, resource_id: String) -> Result<Vec<ResourceVersionSummary>, String> {
-    catalogue_json(&app, reqwest::Method::GET, &format!("/versions/resource/{resource_id}?limit=100"), None).await
+async fn list_resource_versions(
+    app: AppHandle,
+    resource_id: String,
+) -> Result<Vec<ResourceVersionSummary>, String> {
+    catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/versions/resource/{resource_id}?limit=100"),
+        None,
+    )
+    .await
 }
 
 #[tauri::command]
-async fn publish_resource(app: AppHandle, resource_id: String, version: String) -> Result<ResourceVersionSummary, String> {
-    if version.trim().is_empty() { return Err("Release version is required".into()); }
-    catalogue_json(&app, reqwest::Method::POST, &format!("/versions/{resource_id}"), Some(serde_json::json!({ "version": version.trim() }))).await
+async fn publish_resource(
+    app: AppHandle,
+    resource_id: String,
+    version: String,
+) -> Result<ResourceVersionSummary, String> {
+    if version.trim().is_empty() {
+        return Err("Release version is required".into());
+    }
+    catalogue_json(
+        &app,
+        reqwest::Method::POST,
+        &format!("/versions/{resource_id}"),
+        Some(serde_json::json!({ "version": version.trim() })),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -923,6 +1024,61 @@ fn load_ai_conversation(db: &Connection, conversation_id: &str) -> Result<AiConv
     Ok(conversation)
 }
 
+fn persist_user_message(
+    db: &Connection,
+    conversation_id: &str,
+    resource_id: Option<&str>,
+    message: &str,
+) -> Result<Vec<AiMessage>, String> {
+    let exists: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM ai_conversations WHERE id = ?1)",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        let title: String = message.chars().take(60).collect();
+        db.execute(
+            "INSERT INTO ai_conversations (id, resource_id, title) VALUES (?1, ?2, ?3)",
+            params![conversation_id, resource_id, title],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    db.execute(
+        "INSERT INTO ai_messages (id, conversation_id, role, content) VALUES (?1, ?2, 'user', ?3)",
+        params![local_id("message"), conversation_id, message],
+    )
+    .map_err(|error| error.to_string())?;
+    db.execute(
+        "UPDATE ai_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+        [conversation_id],
+    )
+    .map_err(|error| error.to_string())?;
+    load_ai_messages(db, conversation_id)
+}
+
+fn persist_assistant_response(
+    db: &Connection,
+    conversation_id: &str,
+    reply: &str,
+    proposals: &[AiProposal],
+) -> Result<AiConversation, String> {
+    let proposals_json = serde_json::to_string(proposals).map_err(|error| error.to_string())?;
+    db.execute(
+        "INSERT INTO ai_messages (id, conversation_id, role, content, proposals_json)
+         VALUES (?1, ?2, 'assistant', ?3, ?4)",
+        params![local_id("message"), conversation_id, reply, proposals_json],
+    )
+    .map_err(|error| error.to_string())?;
+    db.execute(
+        "UPDATE ai_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+        [conversation_id],
+    )
+    .map_err(|error| error.to_string())?;
+    load_ai_conversation(db, conversation_id)
+}
+
 #[tauri::command]
 fn list_ai_conversations(
     app: AppHandle,
@@ -1029,7 +1185,10 @@ fn preset_proposal(path: &str) -> bool {
         Some(value) => value.split('.'),
         None => return false,
     };
-    segments.next().and_then(|value| value.parse::<usize>().ok()).is_some()
+    segments
+        .next()
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some()
         && matches!(segments.next(), Some("content" | "name"))
         && segments.next().is_none()
 }
@@ -1111,8 +1270,10 @@ fn model_envelope_errors(envelope: &ModelEnvelope) -> Vec<String> {
     }
     for (index, proposal) in envelope.proposals.iter().enumerate() {
         let lorebook_kind = lorebook_proposal_kind(&proposal.path);
-        if !proposal_paths().contains(&proposal.path.as_str()) && lorebook_kind.is_none()
-            && !preset_proposal(&proposal.path) {
+        if !proposal_paths().contains(&proposal.path.as_str())
+            && lorebook_kind.is_none()
+            && !preset_proposal(&proposal.path)
+        {
             errors.push(format!("proposal {index} has an unsupported path"));
         }
         let collection_path = lorebook_kind == Some(true)
@@ -1359,33 +1520,8 @@ async fn send_ai_message(
         .conversation_id
         .unwrap_or_else(|| local_id("conversation"));
     let db = connection(&app)?;
-    let exists: bool = db
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM ai_conversations WHERE id = ?1)",
-            [&conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
-    if !exists {
-        let title: String = message.chars().take(60).collect();
-        db.execute(
-            "INSERT INTO ai_conversations (id, resource_id, title) VALUES (?1, ?2, ?3)",
-            params![conversation_id, input.resource_id, title],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    let user_message_id = local_id("message");
-    db.execute(
-        "INSERT INTO ai_messages (id, conversation_id, role, content) VALUES (?1, ?2, 'user', ?3)",
-        params![user_message_id, conversation_id, message],
-    )
-    .map_err(|error| error.to_string())?;
-    db.execute(
-        "UPDATE ai_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
-        [&conversation_id],
-    )
-    .map_err(|error| error.to_string())?;
-    let messages = load_ai_messages(&db, &conversation_id)?;
+    let messages =
+        persist_user_message(&db, &conversation_id, input.resource_id.as_deref(), message)?;
     drop(db);
 
     let config = read_config(&app)?;
@@ -1423,25 +1559,8 @@ async fn send_ai_message(
             rationale: proposal.rationale,
         })
         .collect::<Vec<_>>();
-    let proposals_json = serde_json::to_string(&proposals).map_err(|error| error.to_string())?;
     let db = connection(&app)?;
-    db.execute(
-        "INSERT INTO ai_messages (id, conversation_id, role, content, proposals_json)
-         VALUES (?1, ?2, 'assistant', ?3, ?4)",
-        params![
-            local_id("message"),
-            conversation_id,
-            envelope.reply,
-            proposals_json
-        ],
-    )
-    .map_err(|error| error.to_string())?;
-    db.execute(
-        "UPDATE ai_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
-        [&conversation_id],
-    )
-    .map_err(|error| error.to_string())?;
-    load_ai_conversation(&db, &conversation_id)
+    persist_assistant_response(&db, &conversation_id, &envelope.reply, &proposals)
 }
 
 fn empty_world_overview(resource_id: String) -> WorldOverview {
@@ -1630,9 +1749,12 @@ async fn create_resource(
     if draft.is_none() && resource.resource_type == "sillytavern/preset" {
         let path = format!("/resources/{}/data", resource.id);
         let created: CharacterDraft = catalogue_json(
-            &app, reqwest::Method::PUT, &path,
+            &app,
+            reqwest::Method::PUT,
+            &path,
             Some(serde_json::json!({ "data": {} })),
-        ).await?;
+        )
+        .await?;
         draft = Some(created);
     }
     Ok(SelectedResource { resource, draft })
@@ -1698,15 +1820,25 @@ async fn save_preset_draft(
     expected_revision: u64,
 ) -> Result<DraftSaveOutcome, String> {
     let resource: CatalogueResource = catalogue_json(
-        &app, reqwest::Method::GET, &format!("/resources/{resource_id}"), None,
-    ).await?;
+        &app,
+        reqwest::Method::GET,
+        &format!("/resources/{resource_id}"),
+        None,
+    )
+    .await?;
     if resource.resource_type != "sillytavern/preset" {
         return Err("Selected resource is not a chat completion preset".into());
     }
     save_draft_if_match(
-        &app, &format!("/resources/{resource_id}/data"), data,
-        resource.draft_data_id.is_some().then_some(expected_revision),
-    ).await
+        &app,
+        &format!("/resources/{resource_id}/data"),
+        data,
+        resource
+            .draft_data_id
+            .is_some()
+            .then_some(expected_revision),
+    )
+    .await
 }
 
 async fn save_draft_if_match(
@@ -1788,7 +1920,7 @@ pub fn run() {
 }
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use super::{
         assistant_instructions, catalogue_urls, decode_current_draft, initialise_database,
         looks_like_frontend_html, lorebook_proposal_kind, model_envelope_errors,
@@ -1814,7 +1946,6 @@ mod tests {
             ["https://catalogue.example/api/auth/me"]
         );
     }
-
 
     #[test]
     fn detects_frontend_html_without_mistaking_images_for_it() {
@@ -2002,3 +2133,9 @@ mod tests {
         assert_eq!(value, r#"{"summary":"B"}"#);
     }
 }
+
+#[cfg(test)]
+mod function_tests;
+
+#[cfg(test)]
+mod integration_tests;

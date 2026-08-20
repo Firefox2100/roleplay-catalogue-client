@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
@@ -7,6 +7,26 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/test/setup.ts",
+    clearMocks: true,
+    restoreMocks: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov", "json", "json-summary"],
+      reportOnFailure: true,
+      include: [
+        "src/threeWayMerge.ts",
+        "src/OverviewPage.tsx",
+        "src/ConflictResolutionDialog.tsx",
+        "src/PresetEditorPage.tsx",
+        "src/ResourcePicker.tsx",
+      ],
+      thresholds: { lines: 85, functions: 50, statements: 55, branches: 55 },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
