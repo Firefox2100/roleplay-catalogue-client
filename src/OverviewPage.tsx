@@ -1,6 +1,7 @@
 import type { MessageKey } from "./i18n";
-import { useState } from "react";
-import type { CharacterCardV3Data, CharacterDraft, EditorContext, JsonValue, LorebookEntry, SelectedCharacter } from "./types";
+import { useEffect, useState } from "react";
+import { exportResourceDraft, listResourceVersions, previewResourceDraft, publishResource } from "./backend";
+import type { CharacterCardV3Data, CharacterDraft, EditorContext, JsonValue, LorebookEntry, ResourceVersionSummary, SelectedCharacter } from "./types";
 import "./OverviewPage.css";
 
 type FieldKey = "name" | "description" | "personality" | "scenario" | "first_mes" | "mes_example" | "creator_notes" | "system_prompt" | "post_history_instructions" | "creator" | "character_version";
@@ -85,9 +86,10 @@ function reviewCard(card: CharacterCardV3Data, t: (key: MessageKey) => string): 
   return issues;
 }
 
-export function OverviewPage({ selected, conflict, context, onContext, onNavigate, onChangeResource, onRetryConflict, onUseServerDraft, t }: {
+export function OverviewPage({ selected, conflict, dirty, context, onContext, onNavigate, onChangeResource, onRetryConflict, onUseServerDraft, t }: {
   selected: SelectedCharacter;
   conflict: CharacterDraft | null;
+  dirty: boolean;
   context: EditorContext;
   onContext: (context: EditorContext) => void;
   onNavigate: (page: ReviewPage) => void;
@@ -97,6 +99,13 @@ export function OverviewPage({ selected, conflict, context, onContext, onNavigat
   t: (key: MessageKey) => string;
 }) {
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [preview, setPreview] = useState<JsonValue | null>(null);
+  const [versions, setVersions] = useState<ResourceVersionSummary[]>([]);
+  const [releaseVersion, setReleaseVersion] = useState("");
+  const [releaseStatus, setReleaseStatus] = useState<"idle" | "previewing" | "exporting" | "publishing" | "error">("idle");
+  const [releaseError, setReleaseError] = useState("");
+  const [publishOpen, setPublishOpen] = useState(false);
+  useEffect(() => { let active = true; void listResourceVersions(selected.resource.id).then((items) => { if (active) setVersions(items); }).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id]);
   if (!selected.draft) return <section className="overview-page"><header className="overview-heading"><div><h1>{t("overviewTitle")}</h1><p>{t("noDraftOverview")}</p></div><button className="secondary" onClick={onChangeResource}>{t("changeResource")}</button></header></section>;
   const stats = cardStatistics(selected.draft.data);
   const filled = stats.fieldRows.filter((field) => field.filled).length;
@@ -104,6 +113,11 @@ export function OverviewPage({ selected, conflict, context, onContext, onNavigat
   const issues = reviewCard(selected.draft.data, t);
   const errors = issues.filter((issue) => issue.severity === "error").length;
   const warnings = issues.length - errors;
+  const draftLinks = selected.resource.linkedLorebooks.filter((link) => !link.versionId).length;
+  const loadPreview = async () => { setReleaseStatus("previewing"); setReleaseError(""); try { setPreview(await previewResourceDraft(selected.resource.id)); setReleaseStatus("idle"); } catch (error) { setReleaseError(String(error)); setReleaseStatus("error"); } };
+  const exportDraft = async () => { setReleaseStatus("exporting"); setReleaseError(""); try { const artifact = await exportResourceDraft(selected.resource.id); const binary = atob(artifact.data); const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0)); const url = URL.createObjectURL(new Blob([bytes], { type: artifact.mediaType })); const link = document.createElement("a"); link.href = url; link.download = artifact.fileName; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); setReleaseStatus("idle"); } catch (error) { setReleaseError(String(error)); setReleaseStatus("error"); } };
+  const publish = async () => { setReleaseStatus("publishing"); setReleaseError(""); try { const version = await publishResource(selected.resource.id, releaseVersion); setVersions((current) => [version, ...current]); setReleaseVersion(""); setPublishOpen(false); setReleaseStatus("idle"); } catch (error) { setReleaseError(String(error)); setReleaseStatus("error"); } };
+  const previewCard = preview && typeof preview === "object" && !Array.isArray(preview) ? ((preview as Record<string, JsonValue>).data ?? preview) as Record<string, JsonValue> : null;
   const openIssue = (issue: ReviewIssue) => { onContext({ path: issue.path, selectedText: null, cursor: null }); onNavigate(issue.page); };
   return <section className="overview-page">
     <header className="overview-heading"><div><p className="overview-eyebrow">{selected.resource.metadata.name}</p><h1>{t("overviewTitle")}</h1><p>{t("overviewIntro")}</p></div><button className="secondary" onClick={onChangeResource}>{t("changeResource")}</button></header>
@@ -116,6 +130,7 @@ export function OverviewPage({ selected, conflict, context, onContext, onNavigat
     <p className="estimate-note">{t("estimateDisclaimer")}</p>
     {conflict && <section className="conflict-panel" role="alert"><div><h2>{t("draftConflict")}</h2><p>{t("draftConflictDetail")}</p><small>{t("localRevision")}: {selected.draft.revision} · {t("serverRevision")}: {conflict.revision}</small></div><div><button className="secondary" onClick={() => setDiscardOpen(true)}>{t("useServerDraft")}</button><button className="primary" onClick={onRetryConflict}>{t("retryLocalDraft")}</button></div></section>}
     <section className="review-panel"><header><div><h2>{t("reviewDiagnostics")}</h2><p>{t("reviewDiagnosticsHint")}</p></div><div className="review-counts"><span className={errors ? "has-errors" : ""}>{errors} {t("errors")}</span><span className={warnings ? "has-warnings" : ""}>{warnings} {t("warnings")}</span></div></header>{issues.length ? <div className="review-issues">{issues.map((issue, index) => <button key={`${issue.path}-${issue.title}-${index}`} onClick={() => openIssue(issue)}><span className={`review-severity ${issue.severity}`} aria-hidden="true">{issue.severity === "error" ? "!" : "△"}</span><span><strong>{t(issue.title)}</strong><small>{issue.detail}</small></span><em>{t("openEditor")}</em></button>)}</div> : <div className="review-ready"><strong>{t("noReviewProblems")}</strong><p>{t("noReviewProblemsDetail")}</p></div>}<footer>{t("deterministicReviewNote")}</footer></section>
+    <section className="review-panel release-panel"><header><div><h2>{t("releaseAndExport")}</h2><p>{t("releaseAndExportHint")}</p></div><div className="release-actions"><button className="secondary" disabled={dirty || releaseStatus !== "idle"} onClick={() => void loadPreview()}>{releaseStatus === "previewing" ? t("previewing") : t("previewMerged")}</button><button className="secondary" disabled={dirty || releaseStatus !== "idle"} onClick={() => void exportDraft()}>{releaseStatus === "exporting" ? t("exporting") : t("exportDraft")}</button><button className="primary" disabled={dirty || errors > 0 || draftLinks > 0 || releaseStatus !== "idle"} onClick={() => setPublishOpen(true)}>{t("publishRelease")}</button></div></header>{dirty && <p className="release-blocker" role="alert">{t("unsavedReleaseBlock")}</p>}{draftLinks > 0 && <p className="release-blocker" role="alert">{t("draftLinksBlockPublish")}</p>}{releaseError && <p className="release-blocker" role="alert">{releaseError}</p>}<div className="collection-list"><div><dt>{t("publishedReleases")}</dt><dd>{versions.length}</dd></div>{versions[0] && <div><dt>{t("latestRelease")}</dt><dd>{versions[0].version}</dd></div>}</div></section>
     <div className="overview-columns">
       <section className="overview-panel"><h2>{t("fieldStatus")}</h2><div className="field-status-list">{stats.fieldRows.map((field) => {
         const active = context.path === field.key;
@@ -129,5 +144,7 @@ export function OverviewPage({ selected, conflict, context, onContext, onNavigat
       </div>
     </div>
     {discardOpen && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setDiscardOpen(false); }}><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("useServerDraftTitle")}</h2><p>{t("useServerDraftBody")}</p><div><button className="secondary" autoFocus onClick={() => setDiscardOpen(false)}>{t("cancel")}</button><button className="danger-button" onClick={() => { setDiscardOpen(false); onUseServerDraft(); }}>{t("useServerDraft")}</button></div></section></div>}
+    {previewCard && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><section className="confirmation-dialog release-preview" role="dialog" aria-modal="true"><h2>{String(previewCard.name ?? t("mergedPreview"))}</h2><p>{t("mergedPreviewHint")}</p>{["description", "personality", "scenario", "first_mes", "mes_example", "creator_notes", "system_prompt", "post_history_instructions"].map((field) => typeof previewCard[field] === "string" && previewCard[field] ? <article key={field}><strong>{field.replace(/_/g, " ")}</strong><p>{String(previewCard[field])}</p></article> : null)}<div><button className="primary" onClick={() => setPreview(null)}>{t("close")}</button></div></section></div>}
+    {publishOpen && <div className="confirmation-layer"><section className="confirmation-dialog" role="dialog" aria-modal="true"><h2>{t("publishRelease")}</h2><p>{t("publishReleaseHint")}</p><label>{t("releaseVersionLabel")}<input autoFocus value={releaseVersion} onChange={(event) => setReleaseVersion(event.target.value)} /></label><div><button className="secondary" onClick={() => setPublishOpen(false)}>{t("cancel")}</button><button className="primary" disabled={!releaseVersion.trim() || releaseStatus === "publishing"} onClick={() => void publish()}>{releaseStatus === "publishing" ? t("publishing") : t("publishRelease")}</button></div></section></div>}
   </section>;
 }

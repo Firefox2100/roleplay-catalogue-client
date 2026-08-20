@@ -11,7 +11,8 @@ export interface LorebookReference { resourceId: string; versionId: string | nul
 export interface CatalogueResource { id: string; resourceType: string; authorId: string; coAuthorIds: string[]; metadata: ResourceMetadata; draftDataId: string | null; coverImageResourceId: string | null; linkedLorebooks: LorebookReference[]; createdAt: string; updatedAt: string; authorUsername: string; revision: number }
 export interface ResourceList { items: CatalogueResource[]; nextOffset: number | null }
 export interface CoverImage { mediaType: string; data: string }
-export interface ResourceVersionSummary { id: string; resourceId: string; version: string; versionNumber: number; visibility: ResourceVisibility; coverImageResourceId: string | null }
+export interface ResourceVersionSummary { id: string; resourceId: string; version: string; versionNumber: number; visibility: ResourceVisibility; coverImageResourceId: string | null; publishedAt: string }
+export interface ExportedDraft { fileName: string; mediaType: string; data: string }
 export interface LinkableLorebook { resource: CatalogueResource; versions: ResourceVersionSummary[]; draftEditable: boolean }
 export interface ResourceSaveOutcome { saved: CatalogueResource | null; current: CatalogueResource | null }
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -67,6 +68,7 @@ export interface CharacterCardV3Data {
   first_mes: string;
   mes_example: string;
   creator_notes: string;
+  creator_notes_multilingual?: Record<string, string> | null;
   system_prompt: string;
   post_history_instructions: string;
   alternate_greetings: string[];
@@ -75,6 +77,9 @@ export interface CharacterCardV3Data {
   tags: string[];
   creator: string;
   character_version: string;
+  source?: string[] | null;
+  creation_date?: number | null;
+  modification_date?: number | null;
   extensions: CharacterCardV3Extensions;
   assets?: CharacterAsset[] | null;
 }
@@ -110,7 +115,13 @@ export interface LorebookData {
 export interface LorebookDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: LorebookData; revision: number }
 export interface DraftSaveOutcome<T> { saved: T | null; current: T | null }
 export interface SelectedLorebook { resource: CatalogueResource; draft: LorebookDraft | null }
-export type SelectedResource = SelectedCharacter | SelectedLorebook;
+export interface PresetPrompt { identifier: string; name?: string; system_prompt?: boolean; marker?: boolean; role?: string | null; content?: string | null; [key: string]: JsonValue | undefined }
+export interface PresetOrderItem { identifier: string; enabled: boolean; [key: string]: JsonValue }
+export interface PresetPromptOrder { character_id: number | string; order: PresetOrderItem[]; [key: string]: JsonValue }
+export interface PresetData { prompts?: PresetPrompt[]; prompt_order?: PresetPromptOrder[]; [key: string]: JsonValue | PresetPrompt[] | PresetPromptOrder[] | undefined }
+export interface PresetDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: PresetData; revision: number }
+export interface SelectedPreset { resource: CatalogueResource; draft: PresetDraft | null }
+export type SelectedResource = SelectedCharacter | SelectedLorebook | SelectedPreset;
 export interface WorldOverview {
   resourceId: string;
   castMode: "fixed-single" | "fixed-ensemble" | "dynamic-ensemble";
@@ -129,9 +140,9 @@ export interface WorldOverview {
   updatedAt: string;
 }
 export interface CreateCharacterInput { name: string; description: string; language: ResourceLanguage; visibility: ResourceVisibility; tags: string[] }
-export interface CreateResourceInput extends CreateCharacterInput { resourceType: "sillytavern/character" | "sillytavern/lorebook" }
+export interface CreateResourceInput extends CreateCharacterInput { resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset" }
 export interface EditorContext { path: string | null; selectedText: string | null; cursor: number | null }
 export interface AiProposal { id: string; path: string; value: JsonValue; rationale: string }
 export interface AiMessage { id: string; conversationId: string; role: "user" | "assistant"; content: string; proposals: AiProposal[]; createdAt: string }
 export interface AiConversation { id: string; resourceId: string | null; title: string; createdAt: string; updatedAt: string; messages: AiMessage[] }
-export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }
+export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | PresetData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }

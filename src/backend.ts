@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CoverImage, CreateResourceInput, DraftSaveOutcome, LinkableLorebook, LorebookData, LorebookDraft, LorebookReference, ResourceList, ResourceSaveOutcome, SelectedResource, SendAiMessageInput, WorldOverview } from "./types";
+import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CoverImage, CreateResourceInput, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookData, LorebookDraft, LorebookReference, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldOverview } from "./types";
 export const loadBootstrap = () => invoke<BootstrapData>("load_bootstrap");
 export const saveConfiguration = (config: AppConfig) => invoke<AppConfig>("save_configuration", { config });
 export const listOwnedResources = (resourceType: CreateResourceInput["resourceType"]) => invoke<ResourceList>("list_owned_resources", { resourceType });
@@ -8,12 +8,19 @@ export const fetchImageContent = (imageResourceId: string) => invoke<CoverImage>
 export const listOwnedImages = () => invoke<ResourceList>("list_owned_images");
 export const uploadResourceCover = (resourceId: string, fileName: string, mediaType: string, bytes: number[]) => invoke<CatalogueResource>("upload_resource_cover", { resourceId, fileName, mediaType, bytes });
 export const selectResourceCover = (resourceId: string, imageResourceId: string) => invoke<CatalogueResource>("select_resource_cover", { resourceId, imageResourceId });
+export const clearResourceCover = (resourceId: string) => invoke<CatalogueResource>("clear_resource_cover", { resourceId });
+export const saveResourceMetadata = (resourceId: string, metadata: ResourceMetadata, expectedRevision: number) => invoke<ResourceSaveOutcome>("save_resource_metadata", { resourceId, metadata, expectedRevision });
+export const exportResourceDraft = (resourceId: string) => invoke<ExportedDraft>("export_resource_draft", { resourceId });
+export const previewResourceDraft = (resourceId: string) => invoke<JsonValue>("preview_resource_draft", { resourceId });
+export const listResourceVersions = (resourceId: string) => invoke<ResourceVersionSummary[]>("list_resource_versions", { resourceId });
+export const publishResource = (resourceId: string, version: string) => invoke<ResourceVersionSummary>("publish_resource", { resourceId, version });
 export const listLinkableLorebooks = () => invoke<LinkableLorebook[]>("list_linkable_lorebooks");
 export const saveLinkedLorebooks = (resourceId: string, linkedLorebooks: LorebookReference[], expectedRevision: number) => invoke<ResourceSaveOutcome>("save_linked_lorebooks", { resourceId, linkedLorebooks, expectedRevision });
 export const selectResource = (resourceId: string, resourceType: CreateResourceInput["resourceType"]) => invoke<SelectedResource>("select_resource", { resourceId, resourceType });
 export const createResource = (input: CreateResourceInput) => invoke<SelectedResource>("create_resource", { input });
 export const saveCharacterDraft = (resourceId: string, data: CharacterCardV3Data, expectedRevision: number) => invoke<DraftSaveOutcome<CharacterDraft>>("save_character_draft", { resourceId, data, expectedRevision });
 export const saveLorebookDraft = (resourceId: string, data: LorebookData, expectedRevision: number) => invoke<DraftSaveOutcome<LorebookDraft>>("save_lorebook_draft", { resourceId, data, expectedRevision });
+export const savePresetDraft = (resourceId: string, data: PresetData, expectedRevision: number) => invoke<DraftSaveOutcome<PresetDraft>>("save_preset_draft", { resourceId, data, expectedRevision });
 export const listAiConversations = (resourceId: string | null) => invoke<AiConversation[]>("list_ai_conversations", { resourceId });
 export const deleteAiConversation = (conversationId: string) => invoke<void>("delete_ai_conversation", { conversationId });
 export const sendAiMessage = (input: SendAiMessageInput) => invoke<AiConversation>("send_ai_message", { input });

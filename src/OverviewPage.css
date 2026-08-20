@@ -58,5 +58,12 @@
 .review-ready { padding: 18px 20px; border-top: 1px solid #edf0f2; color: #326848; }
 .review-ready p { margin: 4px 0 0; color: #687681; font-size: 12px; }
 .review-panel > footer { padding: 10px 20px; background: #f6f8f9; color: #74818a; font-size: 11px; }
+.release-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.release-blocker { margin: 0; padding: 12px 20px; color: #9b3b32; border-top: 1px solid #ecd1cd; background: #fff7f5; }
+.release-panel .collection-list { padding: 12px 20px 18px; }
+.release-preview { width: min(760px, calc(100vw - 32px)); max-height: 85vh; overflow: auto; }
+.release-preview article { padding: 12px 0; border-top: 1px solid var(--border, #dfe4e7); }
+.release-preview article strong { text-transform: capitalize; }
+.release-preview article p { white-space: pre-wrap; }
 @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } .overview-columns { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .overview-heading, .conflict-panel, .lorebook-conflict, .review-panel > header { flex-direction: column; align-items: stretch; } .conflict-panel > div:last-child, .lorebook-conflict > div:last-child { flex-wrap: wrap; } .metric-grid { grid-template-columns: 1fr 1fr; gap: 10px; } .metric-grid article { min-height: 96px; padding: 14px; } .metric-grid strong { font-size: 21px; } .overview-panel { padding: 16px 12px; } .field-status-list button { grid-template-columns: 10px minmax(0, 1fr) 42px; } .field-state { display: none; } .review-issues button { grid-template-columns: 26px minmax(0,1fr); padding: 11px 14px; } .review-issues em { display: none; } }

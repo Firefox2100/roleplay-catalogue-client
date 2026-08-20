@@ -74,7 +74,7 @@ export function AssistantDrawer({ open, onClose, selected, worldOverview, contex
       const conversation = await sendAiMessage({
         conversationId: requestConversationId,
         resourceId,
-        resourceType: selected?.resource.resourceType === "sillytavern/lorebook" ? "sillytavern/lorebook" : "sillytavern/character",
+        resourceType: selected?.resource.resourceType === "sillytavern/lorebook" ? "sillytavern/lorebook" : selected?.resource.resourceType === "sillytavern/preset" ? "sillytavern/preset" : "sillytavern/character",
         resourceLanguage: selected?.resource.metadata.language ?? "en-uk",
         message: outgoing,
         draft: selected?.draft?.data ?? null,

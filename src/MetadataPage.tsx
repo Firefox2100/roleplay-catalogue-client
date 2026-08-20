@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { saveResourceMetadata } from "./backend";
 import type { MessageKey } from "./i18n";
 import { estimateTokens } from "./OverviewPage";
-import type { CharacterCardV3Data, EditorContext, SelectedCharacter, WorldOverview } from "./types";
+import type { CatalogueResource, CharacterCardV3Data, EditorContext, ResourceMetadata, SelectedCharacter, WorldOverview } from "./types";
 import "./MetadataPage.css";
 
 const knownTags: Array<{ value: string; label: MessageKey }> = [
@@ -19,7 +20,7 @@ const unique = (values: string[]) => values.reduce<string[]>((items, value) => {
   return trimmed && !items.some((item) => item.toLocaleLowerCase() === trimmed.toLocaleLowerCase()) ? [...items, trimmed] : items;
 }, []);
 
-export function MetadataPage({ selected, worldOverview, context, dirty, status, onChange, onContext, onSuggestTags, onSave, t }: {
+export function MetadataPage({ selected, worldOverview, context, dirty, status, onChange, onContext, onSuggestTags, onSave, onResource, t }: {
   selected: SelectedCharacter;
   worldOverview: WorldOverview | null;
   context: EditorContext;
@@ -29,11 +30,20 @@ export function MetadataPage({ selected, worldOverview, context, dirty, status, 
   onContext: (context: EditorContext) => void;
   onSuggestTags: () => void;
   onSave: () => void;
+  onResource: (resource: CatalogueResource) => void;
   t: (key: MessageKey) => string;
 }) {
   const [tag, setTag] = useState("");
+  const [resourceMetadata, setResourceMetadata] = useState<ResourceMetadata>(selected.resource.metadata);
+  const [resourceStatus, setResourceStatus] = useState<"idle" | "saving" | "saved" | "error" | "conflict">("idle");
+  useEffect(() => { setResourceMetadata(selected.resource.metadata); setResourceStatus("idle"); }, [selected.resource.id, selected.resource.revision]);
   if (!selected.draft) return <section className="metadata-page"><p className="loading-text">{t("noDraftOverview")}</p></section>;
   const card = selected.draft.data;
+  const languageCode = selected.resource.metadata.language === "zh-cn" ? "zh" : "en";
+  const localisedNotes = card.creator_notes_multilingual ?? {};
+  const toDateTime = (value?: number | null) => value ? new Date(value * 1000).toISOString().slice(0, 16) : "";
+  const fromDateTime = (value: string) => value ? Math.floor(new Date(value).getTime() / 1000) : null;
+  const saveCatalogueMetadata = async () => { setResourceStatus("saving"); try { const outcome = await saveResourceMetadata(selected.resource.id, resourceMetadata, selected.resource.revision); if (outcome.saved) { onResource(outcome.saved); setResourceStatus("saved"); } else if (outcome.current) { onResource(outcome.current); setResourceMetadata(outcome.current.metadata); setResourceStatus("conflict"); } } catch { setResourceStatus("error"); } };
   const tags = Array.isArray(card.tags) ? card.tags.filter((item): item is string => typeof item === "string") : [];
   const sourceTags = unique([...(selected.resource.metadata.tags ?? []), ...(worldOverview?.tags ?? [])]);
   const suggestions = sourceTags.filter((candidate) => !tags.some((item) => item.toLocaleLowerCase() === candidate.toLocaleLowerCase()));
@@ -60,6 +70,12 @@ export function MetadataPage({ selected, worldOverview, context, dirty, status, 
   };
   return <section className="metadata-page">
     <header className="metadata-heading"><div><p className="metadata-eyebrow">{selected.resource.metadata.name}</p><h1>{t("metadataTitle")}</h1><p>{t("metadataIntro")}</p></div></header>
+    <section className="metadata-tags"><header><div><h2>{t("resourceMetadataTitle")}</h2><p>{t("resourceMetadataHint")}</p></div></header><div className="metadata-identity-grid">
+      <label className="metadata-field"><span><strong>{t("name")}</strong></span><input value={resourceMetadata.name} onChange={(event) => { setResourceMetadata({ ...resourceMetadata, name: event.target.value }); setResourceStatus("idle"); }} /></label>
+      <label className="metadata-field"><span><strong>{t("contentLanguage")}</strong></span><select value={resourceMetadata.language} onChange={(event) => { setResourceMetadata({ ...resourceMetadata, language: event.target.value as ResourceMetadata["language"] }); setResourceStatus("idle"); }}><option value="en-uk">{t("languageEnUK")}</option><option value="zh-cn">{t("languageZhCN")}</option></select></label>
+      <label className="metadata-field"><span><strong>{t("visibility")}</strong></span><select value={resourceMetadata.visibility} onChange={(event) => { setResourceMetadata({ ...resourceMetadata, visibility: event.target.value as ResourceMetadata["visibility"] }); setResourceStatus("idle"); }}><option value="private">{t("private")}</option><option value="authenticated">{t("authenticated")}</option><option value="public">{t("public")}</option></select></label>
+      <label className="metadata-field"><span><strong>{t("tags")}</strong></span><input value={resourceMetadata.tags.join(", ")} onChange={(event) => { setResourceMetadata({ ...resourceMetadata, tags: unique(event.target.value.split(",")) }); setResourceStatus("idle"); }} /></label>
+    </div><label className="metadata-field"><span><strong>{t("description")}</strong></span><textarea rows={5} value={resourceMetadata.description} onChange={(event) => { setResourceMetadata({ ...resourceMetadata, description: event.target.value }); setResourceStatus("idle"); }} /></label><div className="metadata-save-bar"><span>{resourceStatus === "saved" ? t("resourceMetadataSaved") : resourceStatus === "conflict" ? t("resourceMetadataConflict") : resourceStatus === "error" ? t("resourceMetadataError") : ""}</span><button className="primary" disabled={resourceStatus === "saving" || !resourceMetadata.name.trim()} onClick={() => void saveCatalogueMetadata()}>{resourceStatus === "saving" ? t("saving") : t("saveResourceMetadata")}</button></div></section>
     <section className={`metadata-tags ${context.path === "tags" ? "active" : ""}`}><header><div><h2>{t("cardTags")}</h2><p>{t("cardTagsHint")}</p></div><button className="secondary" onClick={onSuggestTags}>{t("suggestTagsFromContent")}</button></header>
       <div className="metadata-selected-tags">{tags.map((item) => <button key={item} onClick={() => setTags(tags.filter((candidate) => candidate !== item))} title={`${t("removeTag")}: ${tagLabel(item)}`}>{tagLabel(item)}<span aria-hidden="true">×</span></button>)}</div>
       {tags.length === 0 && <p className="metadata-empty-tags">{t("noCardTags")}</p>}
@@ -71,7 +87,7 @@ export function MetadataPage({ selected, worldOverview, context, dirty, status, 
       <label className={`metadata-field ${context.path === "character_version" ? "active" : ""}`}><span><strong>{t("characterVersionField")}</strong><small>{t("characterVersionHint")}</small></span><input value={card.character_version ?? ""} onFocus={(event) => selectText("character_version", event.currentTarget)} onSelect={(event) => selectText("character_version", event.currentTarget)} onChange={(event) => updateText("character_version", event.target.value, event.target.selectionStart)} /></label>
     </div>
     <label className={`metadata-field ${context.path === "creator_notes" ? "active" : ""}`}><span><strong>{t("creatorNotesField")}</strong><small>{t("creatorNotesHint")}</small></span><textarea rows={12} value={card.creator_notes ?? ""} onFocus={(event) => selectText("creator_notes", event.currentTarget)} onSelect={(event) => selectText("creator_notes", event.currentTarget)} onChange={(event) => updateText("creator_notes", event.target.value, event.target.selectionStart)} /><em>~{estimateTokens(card.creator_notes ?? "")} {t("approximateFieldTokens")}</em></label>
-    <aside className="metadata-source-note"><strong>{t("catalogueMetadata")}</strong><p>{t("catalogueMetadataHint")}</p></aside>
+    <section className="metadata-tags"><header><div><h2>{t("provenanceMetadata")}</h2><p>{t("provenanceMetadataHint")}</p></div></header><label className="metadata-field"><span><strong>{t("localisedCreatorNotes")}</strong><small>{languageCode}</small></span><textarea rows={6} value={localisedNotes[languageCode] ?? ""} onChange={(event) => onChange({ ...card, creator_notes_multilingual: { ...localisedNotes, [languageCode]: event.target.value } })} /></label><div className="metadata-identity-grid"><label className="metadata-field"><span><strong>{t("sourceLinks")}</strong></span><textarea rows={3} value={(card.source ?? []).join("\n")} onChange={(event) => onChange({ ...card, source: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) })} /></label><label className="metadata-field"><span><strong>{t("creationDate")}</strong></span><input type="datetime-local" value={toDateTime(card.creation_date)} onChange={(event) => onChange({ ...card, creation_date: fromDateTime(event.target.value) })} /><span><strong>{t("modificationDate")}</strong></span><input type="datetime-local" value={toDateTime(card.modification_date)} onChange={(event) => onChange({ ...card, modification_date: fromDateTime(event.target.value) })} /></label></div></section>
     <div className="metadata-save-bar"><span role="status">{status === "saved" ? t("metadataSaved") : status === "error" ? t("metadataSaveError") : dirty ? t("unsavedChanges") : ""}</span><button className="primary" onClick={onSave} disabled={!dirty || status === "saving"}>{status === "saving" ? t("saving") : t("saveMetadata")}</button></div>
   </section>;
 }
