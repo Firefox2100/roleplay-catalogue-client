@@ -37,7 +37,7 @@ export function LorebookOverviewPage({ selected, dirty, onEdit, onChangeResource
   const [releaseStatus, setReleaseStatus] = useState<"idle" | "previewing" | "exporting" | "publishing" | "error">("idle");
   const [releaseError, setReleaseError] = useState("");
   useEffect(() => { setMetadata(selected.resource.metadata); setMetadataStatus("idle"); }, [selected.resource.id, selected.resource.revision]);
-  useEffect(() => { let active = true; void listResourceVersions(selected.resource.id).then((items) => active && setVersions(items)).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id]);
+  useEffect(() => { let active = true; if (selected.resource.storageMode !== "local") void listResourceVersions(selected.resource.id).then((items) => active && setVersions(items)).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id, selected.resource.storageMode]);
   const book = selected.draft?.data ?? null;
   const issues = useMemo(() => diagnostics(book?.entries ?? []), [book]);
   const errors = issues.filter((issue) => issue.level === "error").length;

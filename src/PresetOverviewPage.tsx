@@ -21,7 +21,7 @@ export function PresetOverviewPage({ selected, dirty, onEdit, onChangeResource, 
   const [releaseStatus, setReleaseStatus] = useState<"idle" | "previewing" | "exporting" | "publishing" | "error">("idle");
   const [releaseError, setReleaseError] = useState("");
   useEffect(() => { setMetadata(selected.resource.metadata); setMetadataStatus("idle"); }, [selected.resource.id, selected.resource.revision]);
-  useEffect(() => { let active = true; void listResourceVersions(selected.resource.id).then((items) => active && setVersions(items)).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id]);
+  useEffect(() => { let active = true; if (selected.resource.storageMode !== "local") void listResourceVersions(selected.resource.id).then((items) => active && setVersions(items)).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id, selected.resource.storageMode]);
   const data = selected.draft?.data ?? {};
   const prompts = data.prompts ?? [];
   const enabledIds = new Set((data.prompt_order ?? []).flatMap((group) => group.order.filter((item) => item.enabled).map((item) => item.identifier)));

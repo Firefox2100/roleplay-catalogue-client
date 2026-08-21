@@ -18,6 +18,12 @@ export const listLinkableLorebooks = () => invoke<LinkableLorebook[]>("list_link
 export const saveLinkedLorebooks = (resourceId: string, linkedLorebooks: LorebookReference[], expectedRevision: number) => invoke<ResourceSaveOutcome>("save_linked_lorebooks", { resourceId, linkedLorebooks, expectedRevision });
 export const selectResource = (resourceId: string, resourceType: CreateResourceInput["resourceType"]) => invoke<SelectedResource>("select_resource", { resourceId, resourceType });
 export const createResource = (input: CreateResourceInput) => invoke<SelectedResource>("create_resource", { input });
+export const listLocalResources = (resourceType: CreateResourceInput["resourceType"]) => invoke<ResourceList>("list_local_resources", { resourceType });
+export const selectLocalResource = (resourceId: string, resourceType: CreateResourceInput["resourceType"]) => invoke<SelectedResource>("select_local_resource", { resourceId, resourceType });
+export const createLocalResource = (input: CreateResourceInput) => invoke<SelectedResource>("create_local_resource", { input });
+export const saveLocalDraft = <T extends CharacterCardV3Data | LorebookData | PresetData | WorldBundleData>(resourceId: string, data: T) => invoke<CharacterDraft | LorebookDraft | PresetDraft | WorldDraft>("save_local_draft", { resourceId, data });
+export const importResourceFile = (resourceId: string, resourceType: CreateResourceInput["resourceType"], storageMode: "local" | "remote") => invoke<SelectedResource | null>("import_resource_file", { resourceId, resourceType, storageMode });
+export const transportLocalResource = (resourceId: string) => invoke<SelectedResource>("transport_local_resource", { resourceId });
 export const saveCharacterDraft = (resourceId: string, data: CharacterCardV3Data, expectedRevision: number) => invoke<DraftSaveOutcome<CharacterDraft>>("save_character_draft", { resourceId, data, expectedRevision });
 export const saveLorebookDraft = (resourceId: string, data: LorebookData, expectedRevision: number) => invoke<DraftSaveOutcome<LorebookDraft>>("save_lorebook_draft", { resourceId, data, expectedRevision });
 export const savePresetDraft = (resourceId: string, data: PresetData, expectedRevision: number) => invoke<DraftSaveOutcome<PresetDraft>>("save_preset_draft", { resourceId, data, expectedRevision });

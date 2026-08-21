@@ -4,11 +4,13 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::{Cursor, Read},
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -78,6 +80,10 @@ struct CatalogueResource {
     author_username: String,
     #[serde(default)]
     revision: u64,
+    #[serde(default)]
+    storage_mode: Option<String>,
+    #[serde(default)]
+    local_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,10 +156,359 @@ struct DraftSaveOutcome {
     current: Option<CharacterDraft>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SelectedResource {
     resource: CatalogueResource,
     draft: Option<CharacterDraft>,
+}
+
+fn local_workspace(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("workspace");
+    fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+fn safe_local_id(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("Invalid local resource id".into());
+    }
+    Ok(())
+}
+
+fn now_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
+}
+
+fn local_resource_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    safe_local_id(id)?;
+    Ok(local_workspace(app)?.join(id))
+}
+
+fn read_local_resource(path: &std::path::Path) -> Result<CatalogueResource, String> {
+    let mut resource: CatalogueResource =
+        serde_json::from_slice(&fs::read(path.join("resource.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    resource.storage_mode = Some("local".into());
+    resource.local_path = Some(path.to_string_lossy().into_owned());
+    Ok(resource)
+}
+
+fn local_data_file(resource_type: &str) -> Result<&'static str, String> {
+    match resource_type {
+        "sillytavern/character" => Ok("card.json"),
+        "sillytavern/lorebook" => Ok("lorebook.json"),
+        "sillytavern/preset" => Ok("preset.json"),
+        "world-simulation-engine/world" => Ok("world.json"),
+        _ => Err("Unsupported resource type".into()),
+    }
+}
+
+fn write_pretty(path: &std::path::Path, value: &serde_json::Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+fn write_jsonl(path: &std::path::Path, rows: &[serde_json::Value]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut text = String::new();
+    for row in rows {
+        text.push_str(&serde_json::to_string(row).map_err(|e| e.to_string())?);
+        text.push('\n');
+    }
+    fs::write(path, text).map_err(|e| e.to_string())
+}
+
+fn write_local_world(dir: &std::path::Path, data: &serde_json::Value) -> Result<(), String> {
+    write_pretty(
+        &dir.join("manifest.json"),
+        &serde_json::json!({"spec":"wse_world","spec_version":"1.0","world_id":data.pointer("/world/id"),"world_name":data.pointer("/world/name")}),
+    )?;
+    write_pretty(
+        &dir.join("world.json"),
+        data.get("world").unwrap_or(&serde_json::Value::Null),
+    )?;
+    write_pretty(
+        &dir.join("author.json"),
+        data.get("author").unwrap_or(&serde_json::Value::Null),
+    )?;
+    for (name, rows) in data
+        .get("sections")
+        .and_then(|v| v.as_object())
+        .into_iter()
+        .flatten()
+    {
+        write_jsonl(
+            &dir.join("data").join(format!("{name}.jsonl")),
+            rows.as_array().map(Vec::as_slice).unwrap_or(&[]),
+        )?;
+    }
+    for (name, rows) in data
+        .get("configs")
+        .and_then(|v| v.as_object())
+        .into_iter()
+        .flatten()
+    {
+        write_jsonl(
+            &dir.join("configs").join(format!("{name}.jsonl")),
+            rows.as_array().map(Vec::as_slice).unwrap_or(&[]),
+        )?;
+    }
+    write_jsonl(
+        &dir.join("prompts.jsonl"),
+        data.get("prompts")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    )?;
+    write_jsonl(
+        &dir.join("workflows.jsonl"),
+        data.get("workflows")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    )?;
+    let media = data
+        .get("media")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|v| v.get("record").cloned().unwrap_or(v))
+        .collect::<Vec<_>>();
+    write_jsonl(&dir.join("media/manifest.jsonl"), &media)
+}
+
+fn png_card_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("Selected file is not a PNG image".into());
+    }
+    let mut offset = 8usize;
+    while offset.checked_add(12).is_some_and(|end| end <= bytes.len()) {
+        let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let end = offset
+            .checked_add(12 + length)
+            .ok_or("PNG chunk is too large")?;
+        if end > bytes.len() {
+            return Err("PNG is truncated".into());
+        }
+        let kind = &bytes[offset + 4..offset + 8];
+        let data = &bytes[offset + 8..offset + 8 + length];
+        let encoded = if kind == b"tEXt" {
+            data.iter().position(|v| *v == 0).and_then(|split| {
+                matches!(&data[..split], b"ccv3" | b"chara").then_some(data[split + 1..].to_vec())
+            })
+        } else if kind == b"zTXt" {
+            data.iter().position(|v| *v == 0).and_then(|split| {
+                if !matches!(&data[..split], b"ccv3" | b"chara") || data.get(split + 1) != Some(&0)
+                {
+                    return None;
+                }
+                let mut decoded = Vec::new();
+                flate2::read::ZlibDecoder::new(&data[split + 2..])
+                    .take(32 * 1024 * 1024)
+                    .read_to_end(&mut decoded)
+                    .ok()?;
+                Some(decoded)
+            })
+        } else {
+            None
+        };
+        if let Some(encoded) = encoded {
+            let text =
+                std::str::from_utf8(&encoded).map_err(|_| "PNG card metadata is not UTF-8")?;
+            return BASE64
+                .decode(text.trim())
+                .map_err(|_| "PNG card metadata is not valid base64".into());
+        }
+        offset = end;
+    }
+    Err("PNG does not contain Character Card metadata".into())
+}
+
+fn card_data_from_bytes(file_name: &str, bytes: &[u8]) -> Result<serde_json::Value, String> {
+    let payload = if file_name.to_ascii_lowercase().ends_with(".png") {
+        png_card_payload(bytes)?
+    } else {
+        bytes.to_vec()
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&payload).map_err(|_| "Card is not valid UTF-8 JSON")?;
+    if value.get("spec").and_then(|v| v.as_str()) != Some("chara_card_v3") {
+        return Err("Only Character Card V3 imports are supported".into());
+    }
+    let mut data = value
+        .get("data")
+        .cloned()
+        .filter(|v| v.is_object())
+        .ok_or_else(|| "Character Card V3 data must be an object".to_string())?;
+    let object = data.as_object_mut().unwrap();
+    if !object.get("name").is_some_and(|v| v.is_string()) {
+        return Err("Character Card V3 name must be a string".into());
+    }
+    for field in [
+        "description",
+        "personality",
+        "scenario",
+        "first_mes",
+        "mes_example",
+        "creator_notes",
+        "system_prompt",
+        "post_history_instructions",
+        "creator",
+        "character_version",
+    ] {
+        object.entry(field).or_insert_with(|| serde_json::json!(""));
+        if !object[field].is_string() {
+            return Err(format!("Character Card V3 {field} must be a string"));
+        }
+    }
+    object.entry("nickname").or_insert(serde_json::Value::Null);
+    for field in ["alternate_greetings", "group_only_greetings", "tags"] {
+        object.entry(field).or_insert_with(|| serde_json::json!([]));
+        if !object[field]
+            .as_array()
+            .is_some_and(|items| items.iter().all(|item| item.is_string()))
+        {
+            return Err(format!(
+                "Character Card V3 {field} must be an array of strings"
+            ));
+        }
+    }
+    object
+        .entry("character_book")
+        .or_insert(serde_json::Value::Null);
+    object
+        .entry("extensions")
+        .or_insert_with(|| serde_json::json!({"regex_scripts":[],"tavern_helper":null}));
+    object
+        .entry("assets")
+        .or_insert_with(|| serde_json::json!([]));
+    Ok(data)
+}
+
+fn lorebook_data_from_bytes(file_name: &str, bytes: &[u8]) -> Result<serde_json::Value, String> {
+    let payload = if file_name.to_ascii_lowercase().ends_with(".png") {
+        png_card_payload(bytes)?
+    } else {
+        bytes.to_vec()
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&payload).map_err(|_| "Lorebook is not valid UTF-8 JSON")?;
+    let data = match value.get("spec").and_then(|v| v.as_str()) {
+        Some("lorebook_v3") => value
+            .get("data")
+            .cloned()
+            .filter(|v| v.is_object())
+            .ok_or_else(|| "Lorebook V3 data must be an object".to_string()),
+        Some("chara_card_v3") => value
+            .pointer("/data/character_book")
+            .cloned()
+            .filter(|v| v.is_object())
+            .ok_or_else(|| "Character card has no embedded lorebook".to_string()),
+        _ => Err("Only Lorebook V3 or Character Card V3 imports are supported".to_string()),
+    }?;
+    if !data.get("entries").is_some_and(|v| v.is_array())
+        || !data.get("extensions").is_some_and(|v| v.is_object())
+    {
+        return Err("Lorebook V3 requires entries and extensions".into());
+    }
+    Ok(data)
+}
+
+fn replace_local_world_bundle(dir: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    const MAX_FILES: usize = 2_000;
+    const MAX_BYTES: u64 = 250 * 1024 * 1024;
+    let resource_bytes = fs::read(dir.join("resource.json")).map_err(|e| e.to_string())?;
+    let temp = dir.with_extension(format!(
+        "import-{}",
+        REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    if temp.exists() {
+        return Err("Temporary import workspace already exists".into());
+    }
+    fs::create_dir(&temp).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+            .map_err(|_| "World import is not a valid ZIP archive")?;
+        if archive.len() > MAX_FILES {
+            return Err("World bundle contains too many files".into());
+        }
+        let total = (0..archive.len()).try_fold(0u64, |sum, index| {
+            archive
+                .by_index(index)
+                .map(|file| sum.saturating_add(file.size()))
+                .map_err(|e| e.to_string())
+        })?;
+        if total > MAX_BYTES {
+            return Err("World bundle expands beyond 250 MiB".into());
+        }
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index).map_err(|e| e.to_string())?;
+            let relative = file
+                .enclosed_name()
+                .ok_or("World bundle contains an unsafe path")?
+                .to_path_buf();
+            let target = temp.join(relative);
+            if file.is_dir() {
+                fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+                continue;
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut output = fs::File::create(target).map_err(|e| e.to_string())?;
+            std::io::copy(&mut file, &mut output).map_err(|e| e.to_string())?;
+        }
+        fs::write(temp.join("resource.json"), &resource_bytes).map_err(|e| e.to_string())?;
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(temp.join("manifest.json"))
+                .map_err(|_| "World bundle is missing manifest.json")?,
+        )
+        .map_err(|_| "World manifest is not valid JSON")?;
+        if manifest.get("spec").and_then(|v| v.as_str()) != Some("wse_world")
+            || manifest.get("spec_version").and_then(|v| v.as_str()) != Some("1.0")
+        {
+            return Err("Only WorldSE bundle v1.0 imports are supported".into());
+        }
+        let parsed = read_local_data(&temp, "world-simulation-engine/world")?;
+        if parsed
+            .pointer("/world/id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err("World bundle has no world id".into());
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(&temp);
+        return Err(error);
+    }
+    let backup = dir.with_extension(format!(
+        "backup-{}",
+        REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::rename(dir, &backup).map_err(|e| e.to_string())?;
+    if let Err(error) = fs::rename(&temp, dir) {
+        let _ = fs::rename(&backup, dir);
+        return Err(error.to_string());
+    }
+    fs::remove_dir_all(backup).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -559,6 +914,26 @@ async fn fetch_character_cover(
     app: AppHandle,
     resource_id: String,
 ) -> Result<Option<CoverImage>, String> {
+    if let Ok(dir) = local_resource_dir(&app, &resource_id) {
+        if dir.join("resource.json").exists() {
+            for (name, media_type) in [
+                ("cover.png", "image/png"),
+                ("cover.jpg", "image/jpeg"),
+                ("cover.webp", "image/webp"),
+                ("cover.gif", "image/gif"),
+                ("cover.avif", "image/avif"),
+            ] {
+                let path = dir.join(name);
+                if path.exists() {
+                    return Ok(Some(CoverImage {
+                        media_type: media_type.into(),
+                        data: BASE64.encode(fs::read(path).map_err(|e| e.to_string())?),
+                    }));
+                }
+            }
+            return Ok(None);
+        }
+    }
     let path = format!("/images/covers/resources/{resource_id}");
     let response = catalogue_response(&app, reqwest::Method::GET, &path, None).await?;
     if response.status == reqwest::StatusCode::NOT_FOUND {
@@ -707,6 +1082,37 @@ async fn upload_resource_cover(
     media_type: String,
     bytes: Vec<u8>,
 ) -> Result<CatalogueResource, String> {
+    if let Ok(dir) = local_resource_dir(&app, &resource_id) {
+        if dir.join("resource.json").exists() {
+            if bytes.is_empty()
+                || bytes.len() > 25 * 1024 * 1024
+                || !media_type.starts_with("image/")
+            {
+                return Err("Cover must be an image between 1 byte and 25 MiB".into());
+            }
+            for name in [
+                "cover.png",
+                "cover.jpg",
+                "cover.webp",
+                "cover.gif",
+                "cover.avif",
+            ] {
+                let path = dir.join(name);
+                if path.exists() {
+                    fs::remove_file(path).map_err(|e| e.to_string())?;
+                }
+            }
+            let extension = match media_type.as_str() {
+                "image/png" => "png",
+                "image/webp" => "webp",
+                "image/gif" => "gif",
+                "image/avif" => "avif",
+                _ => "jpg",
+            };
+            fs::write(dir.join(format!("cover.{extension}")), bytes).map_err(|e| e.to_string())?;
+            return read_local_resource(&dir);
+        }
+    }
     upload_cover_multipart(&app, &resource_id, file_name, media_type, bytes).await?;
     catalogue_json(
         &app,
@@ -737,6 +1143,23 @@ async fn clear_resource_cover(
     app: AppHandle,
     resource_id: String,
 ) -> Result<CatalogueResource, String> {
+    if let Ok(dir) = local_resource_dir(&app, &resource_id) {
+        if dir.join("resource.json").exists() {
+            for name in [
+                "cover.png",
+                "cover.jpg",
+                "cover.webp",
+                "cover.gif",
+                "cover.avif",
+            ] {
+                let path = dir.join(name);
+                if path.exists() {
+                    fs::remove_file(path).map_err(|e| e.to_string())?;
+                }
+            }
+            return read_local_resource(&dir);
+        }
+    }
     catalogue_json(
         &app,
         reqwest::Method::DELETE,
@@ -755,6 +1178,26 @@ async fn save_resource_metadata(
 ) -> Result<ResourceSaveOutcome, String> {
     if metadata.name.trim().is_empty() {
         return Err("Resource name is required".into());
+    }
+    if let Ok(dir) = local_resource_dir(&app, &resource_id) {
+        if dir.join("resource.json").exists() {
+            let mut resource = read_local_resource(&dir)?;
+            resource.metadata = ResourceMetadata {
+                name: metadata.name.trim().into(),
+                description: metadata.description.trim().into(),
+                visibility: "private".into(),
+                ..metadata
+            };
+            resource.updated_at = now_string();
+            write_pretty(
+                &dir.join("resource.json"),
+                &serde_json::to_value(&resource).map_err(|e| e.to_string())?,
+            )?;
+            return Ok(ResourceSaveOutcome {
+                saved: Some(resource),
+                current: None,
+            });
+        }
     }
     let resource: CatalogueResource = catalogue_json(
         &app,
@@ -1713,6 +2156,634 @@ async fn list_owned_resources(
 }
 
 #[tauri::command]
+fn list_local_resources(app: AppHandle, resource_type: String) -> Result<ResourceList, String> {
+    local_data_file(&resource_type)?;
+    let mut items = Vec::new();
+    for entry in fs::read_dir(local_workspace(&app)?).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            if let Ok(resource) = read_local_resource(&path) {
+                if resource.resource_type == resource_type {
+                    items.push(resource);
+                }
+            }
+        }
+    }
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(ResourceList {
+        items,
+        next_offset: None,
+    })
+}
+
+fn read_jsonl_file(path: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    fs::read_to_string(path)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(|e| format!("{}: {e}", path.display())))
+        .collect()
+}
+
+fn read_local_data(
+    dir: &std::path::Path,
+    resource_type: &str,
+) -> Result<serde_json::Value, String> {
+    if resource_type != "world-simulation-engine/world" {
+        return serde_json::from_slice(
+            &fs::read(dir.join(local_data_file(resource_type)?)).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string());
+    }
+    let section_names = [
+        "locations",
+        "landmarks",
+        "characters",
+        "background_characters",
+        "items",
+        "item_stacks",
+        "equipment",
+        "containers",
+        "turns",
+        "events",
+        "memories",
+        "intents",
+        "entity_relationships",
+        "subjective_entity_claims",
+        "entity_variable_sets",
+    ];
+    let config_names = ["chat", "embed", "image", "tts"];
+    let sections = section_names
+        .into_iter()
+        .map(|name| {
+            Ok((
+                name.to_string(),
+                serde_json::Value::Array(read_jsonl_file(
+                    &dir.join("data").join(format!("{name}.jsonl")),
+                )?),
+            ))
+        })
+        .collect::<Result<serde_json::Map<_, _>, String>>()?;
+    let configs = config_names
+        .into_iter()
+        .map(|name| {
+            Ok((
+                name.to_string(),
+                serde_json::Value::Array(read_jsonl_file(
+                    &dir.join("configs").join(format!("{name}.jsonl")),
+                )?),
+            ))
+        })
+        .collect::<Result<serde_json::Map<_, _>, String>>()?;
+    let world: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("world.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let author: serde_json::Value = if dir.join("author.json").exists() {
+        serde_json::from_slice(&fs::read(dir.join("author.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?
+    } else {
+        serde_json::Value::Null
+    };
+    let media = read_jsonl_file(&dir.join("media/manifest.jsonl"))?.into_iter().map(|record| serde_json::json!({"mediaId":record.get("id").and_then(|v| v.as_str()).unwrap_or_default(),"imageResourceId":null,"record":record})).collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"spec":"wse_world","specVersion":"1.0","world":world,"author":author,"sections":sections,"configs":configs,"prompts":read_jsonl_file(&dir.join("prompts.jsonl"))?,"workflows":read_jsonl_file(&dir.join("workflows.jsonl"))?,"media":media}),
+    )
+}
+
+#[tauri::command]
+fn select_local_resource(
+    app: AppHandle,
+    resource_id: String,
+    resource_type: String,
+) -> Result<SelectedResource, String> {
+    let dir = local_resource_dir(&app, &resource_id)?;
+    let resource = read_local_resource(&dir)?;
+    if resource.resource_type != resource_type {
+        return Err("Selected resource type does not match".into());
+    }
+    let data = read_local_data(&dir, &resource_type)?;
+    let timestamp = resource.updated_at.clone();
+    Ok(SelectedResource {
+        resource,
+        draft: Some(CharacterDraft {
+            id: format!("local-{resource_id}"),
+            resource_id,
+            resource_version_id: None,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            data,
+            revision: 0,
+        }),
+    })
+}
+
+#[tauri::command]
+fn create_local_resource(
+    app: AppHandle,
+    input: CreateResourceInput,
+) -> Result<SelectedResource, String> {
+    local_data_file(&input.resource_type)?;
+    if input.name.trim().is_empty() {
+        return Err("Resource name is required".into());
+    }
+    if !matches!(input.language.as_str(), "en-uk" | "zh-cn") {
+        return Err("Unsupported resource language".into());
+    }
+    let id = local_id("resource");
+    let dir = local_resource_dir(&app, &id)?;
+    fs::create_dir(&dir).map_err(|e| e.to_string())?;
+    let timestamp = now_string();
+    let resource = CatalogueResource {
+        id: id.clone(),
+        resource_type: input.resource_type.clone(),
+        author_id: "local".into(),
+        co_author_ids: vec![],
+        metadata: ResourceMetadata {
+            name: input.name.trim().into(),
+            description: input.description.trim().into(),
+            language: input.language.clone(),
+            visibility: "private".into(),
+            tags: input.tags.clone(),
+        },
+        draft_data_id: Some(format!("local-{id}")),
+        cover_image_resource_id: None,
+        linked_lorebooks: vec![],
+        created_at: timestamp.clone(),
+        updated_at: timestamp.clone(),
+        author_username: "Local workspace".into(),
+        revision: 0,
+        storage_mode: Some("local".into()),
+        local_path: Some(dir.to_string_lossy().into_owned()),
+    };
+    write_pretty(
+        &dir.join("resource.json"),
+        &serde_json::to_value(&resource).map_err(|e| e.to_string())?,
+    )?;
+    let data = match input.resource_type.as_str() {
+        "sillytavern/character" => {
+            serde_json::json!({"name":input.name,"nickname":null,"description":input.description,"personality":"","scenario":"","first_mes":"","mes_example":"","creator_notes":"","system_prompt":"","post_history_instructions":"","alternate_greetings":[],"group_only_greetings":[],"character_book":null,"tags":input.tags,"creator":"","character_version":"","extensions":{"regex_scripts":[],"tavern_helper":null},"assets":[]})
+        }
+        "sillytavern/lorebook" => {
+            serde_json::json!({"name":input.name,"description":input.description,"extensions":{},"entries":[]})
+        }
+        "sillytavern/preset" => serde_json::json!({}),
+        "world-simulation-engine/world" => {
+            let sections = [
+                "locations",
+                "landmarks",
+                "characters",
+                "background_characters",
+                "items",
+                "item_stacks",
+                "equipment",
+                "containers",
+                "turns",
+                "events",
+                "memories",
+                "intents",
+                "entity_relationships",
+                "subjective_entity_claims",
+                "entity_variable_sets",
+            ]
+            .into_iter()
+            .map(|v| (v.to_string(), serde_json::json!([])))
+            .collect::<serde_json::Map<_, _>>();
+            let configs = ["chat", "embed", "image", "tts"]
+                .into_iter()
+                .map(|v| (v.to_string(), serde_json::json!([])))
+                .collect::<serde_json::Map<_, _>>();
+            serde_json::json!({"spec":"wse_world","specVersion":"1.0","world":{"id":local_id("world"),"name":input.name,"description":input.description,"starting_time":"2000-01-01T00:00:00Z","version":1,"url":null,"language":if input.language=="zh-cn"{"zh"}else{"en"},"metadata":{"tags":input.tags}},"author":null,"sections":sections,"configs":configs,"prompts":[],"workflows":[],"media":[]})
+        }
+        _ => unreachable!(),
+    };
+    if input.resource_type == "world-simulation-engine/world" {
+        write_local_world(&dir, &data)?;
+    } else {
+        write_pretty(&dir.join(local_data_file(&input.resource_type)?), &data)?;
+        if input.resource_type == "sillytavern/character" {
+            fs::write(dir.join("cover.png"), BASE64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+3fBqAAAAAElFTkSuQmCC").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(SelectedResource {
+        resource,
+        draft: Some(CharacterDraft {
+            id: format!("local-{id}"),
+            resource_id: id,
+            resource_version_id: None,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            data,
+            revision: 0,
+        }),
+    })
+}
+
+#[tauri::command]
+fn save_local_draft(
+    app: AppHandle,
+    resource_id: String,
+    data: serde_json::Value,
+) -> Result<CharacterDraft, String> {
+    let dir = local_resource_dir(&app, &resource_id)?;
+    let mut resource = read_local_resource(&dir)?;
+    if resource.resource_type == "world-simulation-engine/world" {
+        write_local_world(&dir, &data)?;
+    } else {
+        write_pretty(&dir.join(local_data_file(&resource.resource_type)?), &data)?;
+    }
+    resource.updated_at = now_string();
+    write_pretty(
+        &dir.join("resource.json"),
+        &serde_json::to_value(&resource).map_err(|e| e.to_string())?,
+    )?;
+    Ok(CharacterDraft {
+        id: format!("local-{resource_id}"),
+        resource_id,
+        resource_version_id: None,
+        created_at: resource.created_at,
+        updated_at: resource.updated_at,
+        data,
+        revision: 0,
+    })
+}
+
+#[tauri::command]
+async fn import_resource_file(
+    app: AppHandle,
+    resource_id: String,
+    resource_type: String,
+    storage_mode: String,
+) -> Result<Option<SelectedResource>, String> {
+    local_data_file(&resource_type)?;
+    let (label, extensions): (&str, &[&str]) = match resource_type.as_str() {
+        "sillytavern/character" => ("Character Card V3", &["json", "png"]),
+        "sillytavern/lorebook" => ("Lorebook V3", &["json", "png"]),
+        "sillytavern/preset" => ("SillyTavern preset", &["json"]),
+        "world-simulation-engine/world" => ("WorldSE bundle", &["zip"]),
+        _ => unreachable!(),
+    };
+    let Some(file_path) = app
+        .dialog()
+        .file()
+        .add_filter(label, extensions)
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = file_path
+        .into_path()
+        .map_err(|_| "Only local files can be imported")?;
+    let file_name = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or("Selected file has no valid name")?
+        .to_string();
+    let bytes = fs::read(&path).map_err(|e| format!("Could not read selected file: {e}"))?;
+    if bytes.is_empty() {
+        return Err("Selected file is empty".into());
+    }
+
+    if storage_mode == "local" {
+        let dir = local_resource_dir(&app, &resource_id)?;
+        let mut resource = read_local_resource(&dir)?;
+        if resource.resource_type != resource_type {
+            return Err("Selected resource type does not match import type".into());
+        }
+        let data = match resource_type.as_str() {
+            "sillytavern/character" => {
+                let data = card_data_from_bytes(&file_name, &bytes)?;
+                write_pretty(&dir.join("card.json"), &data)?;
+                if file_name.to_ascii_lowercase().ends_with(".png") {
+                    fs::write(dir.join("cover.png"), &bytes).map_err(|e| e.to_string())?;
+                }
+                data
+            }
+            "sillytavern/lorebook" => {
+                let data = lorebook_data_from_bytes(&file_name, &bytes)?;
+                write_pretty(&dir.join("lorebook.json"), &data)?;
+                data
+            }
+            "sillytavern/preset" => {
+                let data: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|_| "Preset is not valid UTF-8 JSON")?;
+                if !data.is_object() {
+                    return Err("Preset JSON must contain an object".into());
+                }
+                write_pretty(&dir.join("preset.json"), &data)?;
+                data
+            }
+            "world-simulation-engine/world" => {
+                replace_local_world_bundle(&dir, &bytes)?;
+                read_local_data(&dir, &resource_type)?
+            }
+            _ => unreachable!(),
+        };
+        resource = read_local_resource(&dir)?;
+        resource.updated_at = now_string();
+        write_pretty(
+            &dir.join("resource.json"),
+            &serde_json::to_value(&resource).map_err(|e| e.to_string())?,
+        )?;
+        let timestamp = resource.updated_at.clone();
+        return Ok(Some(SelectedResource {
+            resource,
+            draft: Some(CharacterDraft {
+                id: format!("local-{resource_id}"),
+                resource_id,
+                resource_version_id: None,
+                created_at: timestamp.clone(),
+                updated_at: timestamp,
+                data,
+                revision: 0,
+            }),
+        }));
+    }
+    if storage_mode != "remote" {
+        return Err("Unsupported storage mode".into());
+    }
+    const MAX_IMPORT_BYTES: usize = 250 * 1024 * 1024;
+    if bytes.len() > MAX_IMPORT_BYTES {
+        return Err("Import file exceeds 250 MiB".into());
+    }
+    let endpoint = match resource_type.as_str() {
+        "sillytavern/character" => "import-card",
+        "sillytavern/lorebook" => "import-lorebook",
+        "sillytavern/preset" => "import-preset",
+        "world-simulation-engine/world" => "import-world",
+        _ => unreachable!(),
+    };
+    let config = read_config(&app)?;
+    let urls = catalogue_urls(&config, &format!("/resources/{resource_id}/{endpoint}"))?;
+    let client = reqwest::Client::builder()
+        .https_only(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    for (index, url) in urls.iter().enumerate() {
+        let part = reqwest::multipart::Part::bytes(bytes.clone())
+            .file_name(file_name.clone())
+            .mime_str(if file_name.to_ascii_lowercase().ends_with(".png") {
+                "image/png"
+            } else if file_name.to_ascii_lowercase().ends_with(".zip") {
+                "application/zip"
+            } else {
+                "application/json"
+            })
+            .map_err(|e| e.to_string())?;
+        let response = client
+            .post(url)
+            .bearer_auth(config.catalogue.api_key.trim())
+            .multipart(reqwest::multipart::Form::new().part("file", part))
+            .send()
+            .await
+            .map_err(|e| format!("Catalogue import failed: {e}"))?;
+        let status = response.status();
+        let body = response.bytes().await.map_err(|e| e.to_string())?;
+        if index + 1 < urls.len()
+            && matches!(
+                status,
+                reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            )
+        {
+            continue;
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "Catalogue import returned {status}: {}",
+                response_excerpt(&body)
+            ));
+        }
+        let selected: SelectedResource = serde_json::from_slice(&body)
+            .map_err(|e| format!("Catalogue import response was invalid: {e}"))?;
+        return Ok(Some(selected));
+    }
+    Err("Catalogue import endpoint was not found".into())
+}
+
+async fn upload_local_image(
+    app: &AppHandle,
+    file_name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+    metadata: &ResourceMetadata,
+) -> Result<CatalogueResource, String> {
+    let config = read_config(app)?;
+    let urls = catalogue_urls(&config, "/images")?;
+    let client = reqwest::Client::builder()
+        .https_only(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    for (index, url) in urls.iter().enumerate() {
+        let file = reqwest::multipart::Part::bytes(bytes.clone())
+            .file_name(file_name.clone())
+            .mime_str(&media_type)
+            .map_err(|e| e.to_string())?;
+        let mut form = reqwest::multipart::Form::new()
+            .text("name", file_name.clone())
+            .text("description", "Transported local WorldSE media")
+            .text("visibility", metadata.visibility.clone())
+            .text("language", metadata.language.clone())
+            .part("file", file);
+        for tag in &metadata.tags {
+            form = form.text("tags", tag.clone());
+        }
+        let response = client
+            .post(url)
+            .bearer_auth(config.catalogue.api_key.trim())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| format!("Catalogue image upload failed: {e}"))?;
+        let status = response.status();
+        let body = response.bytes().await.map_err(|e| e.to_string())?;
+        if index + 1 < urls.len()
+            && matches!(
+                status,
+                reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            )
+        {
+            continue;
+        }
+        if !status.is_success() {
+            return Err(format!(
+                "Catalogue image upload returned {status}: {}",
+                response_excerpt(&body)
+            ));
+        }
+        return serde_json::from_slice(&body)
+            .map_err(|e| format!("Catalogue image response was invalid: {e}"));
+    }
+    Err("Catalogue image endpoint was not found".into())
+}
+
+fn local_media_path(dir: &std::path::Path, relative: &str) -> Result<PathBuf, String> {
+    let relative = std::path::Path::new(relative);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("World media manifest contains an unsafe file path".into());
+    }
+    let path = dir.join(relative);
+    if !path.is_file() {
+        return Err(format!(
+            "World media file is missing: {}",
+            relative.display()
+        ));
+    }
+    Ok(path)
+}
+
+fn inferred_image_media_type(path: &std::path::Path) -> Result<&'static str, String> {
+    match path
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => Ok("image/png"),
+        "jpg" | "jpeg" => Ok("image/jpeg"),
+        "webp" => Ok("image/webp"),
+        "gif" => Ok("image/gif"),
+        "avif" => Ok("image/avif"),
+        _ => Err(format!("Unsupported local image type: {}", path.display())),
+    }
+}
+
+#[tauri::command]
+async fn transport_local_resource(
+    app: AppHandle,
+    resource_id: String,
+) -> Result<SelectedResource, String> {
+    let dir = local_resource_dir(&app, &resource_id)?;
+    let local = read_local_resource(&dir)?;
+    let mut data = read_local_data(&dir, &local.resource_type)?;
+    let body = serde_json::json!({
+        "resourceType": local.resource_type.clone(), "name": local.metadata.name.clone(),
+        "description": local.metadata.description.clone(), "language": local.metadata.language.clone(),
+        "visibility": local.metadata.visibility.clone(), "tags": local.metadata.tags.clone(),
+    });
+    let remote: CatalogueResource =
+        catalogue_json(&app, reqwest::Method::POST, "/resources", Some(body)).await?;
+    let has_local_cover = matches!(
+        remote.resource_type.as_str(),
+        "sillytavern/character" | "sillytavern/lorebook"
+    ) && [
+        "cover.png",
+        "cover.jpg",
+        "cover.webp",
+        "cover.gif",
+        "cover.avif",
+    ]
+    .iter()
+    .any(|name| dir.join(name).is_file());
+    let transport_result: Result<SelectedResource, String> = async {
+        if remote.resource_type == "world-simulation-engine/world" {
+            let media = data
+                .get_mut("media")
+                .and_then(|v| v.as_array_mut())
+                .ok_or("World media must be an array")?;
+            for reference in media {
+                if reference
+                    .get("imageResourceId")
+                    .is_some_and(|v| v.is_string())
+                {
+                    continue;
+                }
+                let Some(file_name) = reference
+                    .pointer("/record/file")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let path = local_media_path(&dir, &file_name)?;
+                let uploaded = upload_local_image(
+                    &app,
+                    path.file_name()
+                        .and_then(|v| v.to_str())
+                        .unwrap_or("world-image")
+                        .to_string(),
+                    inferred_image_media_type(&path)?.into(),
+                    fs::read(&path).map_err(|e| e.to_string())?,
+                    &local.metadata,
+                )
+                .await?;
+                reference["imageResourceId"] = serde_json::Value::String(uploaded.id);
+            }
+        }
+        let draft: CharacterDraft = catalogue_json(
+            &app,
+            reqwest::Method::PUT,
+            &format!("/resources/{}/data", remote.id),
+            Some(serde_json::json!({"data": data.clone()})),
+        )
+        .await?;
+        if matches!(
+            remote.resource_type.as_str(),
+            "sillytavern/character" | "sillytavern/lorebook"
+        ) {
+            for (name, media_type) in [
+                ("cover.png", "image/png"),
+                ("cover.jpg", "image/jpeg"),
+                ("cover.webp", "image/webp"),
+                ("cover.gif", "image/gif"),
+                ("cover.avif", "image/avif"),
+            ] {
+                let path = dir.join(name);
+                if path.exists() {
+                    upload_cover_multipart(
+                        &app,
+                        &remote.id,
+                        name.into(),
+                        media_type.into(),
+                        fs::read(path).map_err(|e| e.to_string())?,
+                    )
+                    .await?;
+                    break;
+                }
+            }
+        }
+        let confirmed_resource: CatalogueResource = catalogue_json(
+            &app,
+            reqwest::Method::GET,
+            &format!("/resources/{}", remote.id),
+            None,
+        )
+        .await?;
+        let confirmed_draft = fetch_draft(&app, &remote.id)
+            .await?
+            .ok_or("Catalogue did not confirm the transported draft")?;
+        if confirmed_draft.id != draft.id {
+            return Err("Catalogue confirmed a different draft after transport".into());
+        }
+        if confirmed_draft.data != draft.data {
+            return Err("Catalogue confirmation did not match the processed draft".into());
+        }
+        if has_local_cover && confirmed_resource.cover_image_resource_id.is_none() {
+            return Err("Catalogue did not confirm the transported cover image".into());
+        }
+        Ok(SelectedResource {
+            resource: confirmed_resource,
+            draft: Some(confirmed_draft),
+        })
+    }
+    .await;
+    let selected = transport_result.map_err(|error| format!("Transport created catalogue resource {} but did not complete; the local resource was retained. {error}", remote.id))?;
+    fs::remove_dir_all(&dir).map_err(|e| {
+        format!(
+            "Catalogue confirmed resource {}, but the local workspace could not be removed: {e}",
+            remote.id
+        )
+    })?;
+    Ok(selected)
+}
+
+#[tauri::command]
 async fn select_resource(
     app: AppHandle,
     resource_id: String,
@@ -1995,10 +3066,12 @@ fn decode_current_draft(body: &[u8]) -> Result<CharacterDraft, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_bootstrap,
             save_configuration,
             list_owned_resources,
+            list_local_resources,
             list_owned_images,
             list_linkable_lorebooks,
             fetch_character_cover,
@@ -2014,6 +3087,11 @@ pub fn run() {
             save_linked_lorebooks,
             select_resource,
             create_resource,
+            select_local_resource,
+            create_local_resource,
+            save_local_draft,
+            import_resource_file,
+            transport_local_resource,
             save_character_draft,
             save_lorebook_draft,
             save_preset_draft,
@@ -2031,11 +3109,71 @@ pub fn run() {
 #[cfg(test)]
 mod unit_tests {
     use super::{
-        assistant_instructions, catalogue_urls, decode_current_draft, initialise_database,
-        looks_like_frontend_html, lorebook_proposal_kind, model_envelope_errors,
-        parse_model_envelope, preset_proposal, response_excerpt, AppConfig, CatalogueResource,
+        assistant_instructions, card_data_from_bytes, catalogue_urls, decode_current_draft,
+        initialise_database, local_id, looks_like_frontend_html, lorebook_data_from_bytes,
+        lorebook_proposal_kind, model_envelope_errors, parse_model_envelope, preset_proposal,
+        replace_local_world_bundle, response_excerpt, AppConfig, CatalogueResource, BASE64,
     };
+    use base64::Engine as _;
     use rusqlite::Connection;
+    use std::io::{Cursor, Write};
+
+    #[test]
+    fn imports_only_v3_card_and_lorebook_documents() {
+        let card = br#"{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"A","character_book":{"entries":[],"extensions":{}}}}"#;
+        assert_eq!(
+            card_data_from_bytes("card.json", card).unwrap()["name"],
+            "A"
+        );
+        assert!(
+            card_data_from_bytes("card.json", br#"{"spec":"chara_card_v2","data":{}}"#).is_err()
+        );
+        assert!(lorebook_data_from_bytes("book.json", card).unwrap()["entries"].is_array());
+        let book = br#"{"spec":"lorebook_v3","data":{"entries":[],"extensions":{}}}"#;
+        assert!(lorebook_data_from_bytes("book.json", book).unwrap()["entries"].is_array());
+    }
+
+    #[test]
+    fn extracts_base64_card_metadata_from_png_text_chunks() {
+        let card = br#"{"spec":"chara_card_v3","data":{"name":"PNG"}}"#;
+        let text = format!("ccv3\0{}", BASE64.encode(card));
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&(text.len() as u32).to_be_bytes());
+        png.extend_from_slice(b"tEXt");
+        png.extend_from_slice(text.as_bytes());
+        png.extend_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(
+            card_data_from_bytes("card.png", &png).unwrap()["name"],
+            "PNG"
+        );
+    }
+
+    #[test]
+    fn unpacks_a_valid_world_bundle_and_rejects_wrong_specs() {
+        fn bundle(spec: &str) -> Vec<u8> {
+            let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            archive.start_file("manifest.json", options).unwrap();
+            write!(archive, "{{\"spec\":\"{spec}\",\"spec_version\":\"1.0\"}}").unwrap();
+            archive.start_file("world.json", options).unwrap();
+            archive
+                .write_all(br#"{"id":"world-1","name":"World"}"#)
+                .unwrap();
+            archive.start_file("author.json", options).unwrap();
+            archive.write_all(b"null").unwrap();
+            archive.finish().unwrap().into_inner()
+        }
+        let root = std::env::temp_dir().join(local_id("world-import-test"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("resource.json"), b"{}").unwrap();
+        replace_local_world_bundle(&root, &bundle("wse_world")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("world.json")).unwrap(),
+            r#"{"id":"world-1","name":"World"}"#
+        );
+        assert!(replace_local_world_bundle(&root, &bundle("wrong")).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn tries_direct_and_deployed_api_layouts() {

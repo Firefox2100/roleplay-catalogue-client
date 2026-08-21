@@ -3,7 +3,7 @@ import "./App.css";
 import "./AppLayout.css";
 import { AssetsPage } from "./AssetsPage";
 import { AssistantDrawer } from "./AssistantDrawer";
-import { saveCharacterDraft, saveLorebookDraft, savePresetDraft, saveWorldDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
+import { importResourceFile, transportLocalResource, saveCharacterDraft, saveLocalDraft, saveLorebookDraft, savePresetDraft, saveWorldDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
 import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
 import { CharacterFoundationPage } from "./CharacterFoundationPage";
 import { DialogueVoicePage } from "./DialogueVoicePage";
@@ -61,6 +61,11 @@ function App() {
   const [worldStatus, setWorldStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardStatus, setCardStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardDirty, setCardDirty] = useState(false);
+  const [importStatus, setImportStatus] = useState<"idle" | "importing" | "error">("idle");
+  const [importError, setImportError] = useState("");
+  const [transportOpen, setTransportOpen] = useState(false);
+  const [transportStatus, setTransportStatus] = useState<"idle" | "moving" | "error">("idle");
+  const [transportError, setTransportError] = useState("");
   const [cardBase, setCardBase] = useState<CharacterDraft | LorebookDraft | PresetDraft | WorldDraft | null>(null);
   const [mergeConflict, setMergeConflict] = useState<{ kind: "character" | "lorebook" | "preset" | "world"; merged: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData; conflicts: MergeConflicts; remoteRevision: number; remoteData: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData } | null>(null);
   const [assistantPrompt, setAssistantPrompt] = useState<string | null>(null);
@@ -96,6 +101,22 @@ function App() {
   const save = async () => { setStatus("saving"); try { const config = await saveConfiguration(draft); setDraft(config); setData((current) => ({ ...current, config })); setStatus("saved"); } catch { setStatus("error"); } };
   const selectResource = (value: SelectedResource) => { setSelected(value); setCardBase(value.draft); setCardDirty(false); setMergeConflict(null); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage(value.resource.resourceType === "world-simulation-engine/world" ? "world-overview" : value.resource.resourceType === "sillytavern/lorebook" ? "lorebook-overview" : value.resource.resourceType === "sillytavern/preset" ? "preset-overview" : "overview"); if (!desktopDefault()) setLeftOpen(false); };
   const changeResource = () => { setSelected(null); setCardBase(null); setWorldOverview(null); setCardDirty(false); setMergeConflict(null); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage("resources"); };
+  const importSelected = async () => {
+    if (!selected || cardDirty || importStatus === "importing") return;
+    setImportStatus("importing");
+    setImportError("");
+    try {
+      const imported = await importResourceFile(selected.resource.id, selected.resource.resourceType as import("./types").CreateResourceInput["resourceType"], selected.resource.storageMode === "local" ? "local" : "remote");
+      if (imported) selectResource(imported);
+      setImportStatus("idle");
+    } catch (reason) { setImportError(String(reason)); setImportStatus("error"); }
+  };
+  const transportSelected = async () => {
+    if (!selected || selected.resource.storageMode !== "local" || cardDirty) return;
+    setTransportStatus("moving"); setTransportError("");
+    try { const remote = await transportLocalResource(selected.resource.id); setTransportOpen(false); setTransportStatus("idle"); selectResource(remote); }
+    catch (reason) { setTransportError(String(reason)); setTransportStatus("error"); }
+  };
   const persistWorldOverview = async (next = worldOverview) => {
     if (!next) return;
     setWorldStatus("saving");
@@ -171,6 +192,7 @@ function App() {
   };
   const persistCharacter = async (data: CharacterCardV3Data, expectedRevision: number, mergeBase = (cardBase as CharacterDraft | null)?.data ?? data) => {
     if (!selected || selected.resource.resourceType !== "sillytavern/character") return;
+    if (selected.resource.storageMode === "local") { const saved = await saveLocalDraft(selected.resource.id, data) as CharacterDraft; setSelected((current) => current ? { ...current, draft: saved } as SelectedCharacter : current); setCardBase(saved); setCardDirty(false); setCardStatus("saved"); return; }
     const outcome = await saveCharacterDraft(selected.resource.id, data, expectedRevision);
     if (!outcome.saved && outcome.current) {
       const withRemote = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>);
@@ -205,6 +227,7 @@ function App() {
   };
   const persistLorebook = async (data: LorebookData, expectedRevision: number, mergeBase = (cardBase as LorebookDraft | null)?.data ?? data) => {
     if (!selected || selected.resource.resourceType !== "sillytavern/lorebook") return;
+    if (selected.resource.storageMode === "local") { const saved = await saveLocalDraft(selected.resource.id, data) as LorebookDraft; setSelected((current) => current ? { ...current, draft: saved } as SelectedLorebook : current); setCardBase(saved); setCardDirty(false); setCardStatus("saved"); return; }
     const outcome = await saveLorebookDraft(selected.resource.id, data, expectedRevision);
     if (!outcome.saved && outcome.current) {
       const result = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>);
@@ -234,6 +257,7 @@ function App() {
   };
   const persistPreset = async (data: PresetData, expectedRevision: number, mergeBase = (cardBase as PresetDraft | null)?.data ?? data) => {
     if (!selected || selected.resource.resourceType !== "sillytavern/preset") return;
+    if (selected.resource.storageMode === "local") { const saved = await saveLocalDraft(selected.resource.id, data) as PresetDraft; setSelected((current) => current ? { ...current, draft: saved } as SelectedPreset : current); setCardBase(saved); setCardDirty(false); setCardStatus("saved"); return; }
     const outcome = await savePresetDraft(selected.resource.id, data, expectedRevision);
     if (!outcome.saved && outcome.current) {
       const result = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>);
@@ -253,6 +277,7 @@ function App() {
   const updateWorld = (data: WorldBundleData) => { setSelected((current) => current?.draft && current.resource.resourceType === "world-simulation-engine/world" ? { ...current, draft: { ...current.draft, data } } as SelectedWorld : current); setCardDirty(true); setCardStatus("idle"); };
   const persistWorld = async (data: WorldBundleData, expectedRevision: number, mergeBase = (cardBase as WorldDraft | null)?.data ?? data) => {
     if (!selected || selected.resource.resourceType !== "world-simulation-engine/world") return;
+    if (selected.resource.storageMode === "local") { const saved = await saveLocalDraft(selected.resource.id, data) as WorldDraft; setSelected({ ...selected, draft: saved } as SelectedWorld); setCardBase(saved); setCardDirty(false); setCardStatus("saved"); return; }
     const outcome = await saveWorldDraft(selected.resource.id, data, expectedRevision);
     if (!outcome.saved && outcome.current) { const result = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>); if (!Object.keys(result.conflicts).length) return persistWorld(result.merged as unknown as WorldBundleData, outcome.current.revision, outcome.current.data); setMergeConflict({ kind: "world", merged: result.merged as unknown as WorldBundleData, conflicts: result.conflicts, remoteRevision: outcome.current.revision, remoteData: outcome.current.data }); setCardStatus("error"); return; }
     if (!outcome.saved) throw new Error("Catalogue save returned no World draft"); setSelected({ ...selected, draft: outcome.saved } as SelectedWorld); setCardBase(outcome.saved); setCardDirty(false); setMergeConflict(null); setCardStatus("saved");
@@ -287,6 +312,9 @@ function App() {
     <aside className={`drawer ${leftOpen ? "drawer--open" : ""}`}>
       <nav className="nav-list">
         <div className="drawer-top"><strong>{selected?.resource.metadata.name ?? t("resources")}</strong><button onClick={() => setLeftOpen(false)} aria-label={t("collapseNav")}>‹</button></div>
+        <button onClick={() => void importSelected()} disabled={cardDirty || importStatus === "importing"} title={cardDirty ? t("saveBeforeImport") : t("importFile")}><span>⇧</span>{importStatus === "importing" ? t("importingFile") : t("importFile")}</button>
+        {selected.resource.storageMode === "local" && <button onClick={() => { setTransportError(""); setTransportStatus("idle"); setTransportOpen(true); }} disabled={cardDirty || transportStatus === "moving"} title={cardDirty ? t("saveBeforeTransport") : t("transportToCatalogue")}><span>⇥</span>{t("transportToCatalogue")}</button>}
+        {importStatus === "error" && <p className="nav-status-error" role="alert">{t("importFailed")} {importError}</p>}
         {selectedCharacter && <><button className={page === "overview" ? "active" : ""} onClick={() => go("overview")}><span>◫</span>{t("overview")}</button>
         <button className={page === "world" ? "active" : ""} onClick={() => go("world")}><span>◎</span>{t("worldOverview")}</button>
         <button className={page === "foundation" ? "active" : ""} onClick={() => go("foundation")}><span>◇</span>{t("foundation")}</button>
@@ -295,7 +323,7 @@ function App() {
         <button className={page === "runtime" ? "active" : ""} onClick={() => go("runtime")}><span>⌁</span>{t("runtimeInstructions")}</button>
         <button className={page === "metadata" ? "active" : ""} onClick={() => go("metadata")}><span>ⓘ</span>{t("metadata")}</button>
         <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("embeddedLorebook")}</button>
-        <button className={page === "linked-lorebooks" ? "active" : ""} onClick={() => go("linked-lorebooks")}><span>⛓</span>{t("linkedLorebooks")}</button>
+        {selectedCharacter.resource.storageMode !== "local" && <button className={page === "linked-lorebooks" ? "active" : ""} onClick={() => go("linked-lorebooks")}><span>⛓</span>{t("linkedLorebooks")}</button>}
         <button className={page === "extensions" ? "active" : ""} onClick={() => go("extensions")}><span>⌘</span>{t("extensionsAndScripts")}</button>
         <button className={page === "mvu" ? "active" : ""} onClick={() => go("mvu")}><span>↻</span>{t("mvuComposer")}</button>
         <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><span>▧</span>{t("assetsAndCover")}</button></>}
@@ -339,6 +367,7 @@ function App() {
       const task = mergeConflict.kind === "character" ? persistCharacter(resolved as unknown as CharacterCardV3Data, mergeConflict.remoteRevision, mergeConflict.remoteData as CharacterCardV3Data) : mergeConflict.kind === "lorebook" ? persistLorebook(resolved as unknown as LorebookData, mergeConflict.remoteRevision, mergeConflict.remoteData as LorebookData) : mergeConflict.kind === "world" ? persistWorld(resolved as unknown as WorldBundleData, mergeConflict.remoteRevision, mergeConflict.remoteData as WorldBundleData) : persistPreset(resolved as unknown as PresetData, mergeConflict.remoteRevision, mergeConflict.remoteData as PresetData);
       void task.catch(() => setCardStatus("error"));
     }} t={t} />}
+    {transportOpen && <div className="confirmation-layer"><section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="transport-title"><h2 id="transport-title">{t("transportTitle")}</h2><p>{t("transportBody")}</p>{transportError && <p className="release-blocker" role="alert">{transportError}</p>}<div><button className="secondary" autoFocus disabled={transportStatus === "moving"} onClick={() => setTransportOpen(false)}>{t("cancel")}</button><button className="danger-button" disabled={transportStatus === "moving"} onClick={() => void transportSelected()}>{transportStatus === "moving" ? t("transporting") : t("transportConfirm")}</button></div></section></div>}
   </div>;
 }
 

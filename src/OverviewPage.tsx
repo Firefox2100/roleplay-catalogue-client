@@ -105,7 +105,7 @@ export function OverviewPage({ selected, conflict, dirty, context, onContext, on
   const [releaseStatus, setReleaseStatus] = useState<"idle" | "previewing" | "exporting" | "publishing" | "error">("idle");
   const [releaseError, setReleaseError] = useState("");
   const [publishOpen, setPublishOpen] = useState(false);
-  useEffect(() => { let active = true; void listResourceVersions(selected.resource.id).then((items) => { if (active) setVersions(items); }).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id]);
+  useEffect(() => { let active = true; if (selected.resource.storageMode !== "local") void listResourceVersions(selected.resource.id).then((items) => { if (active) setVersions(items); }).catch(() => undefined); return () => { active = false; }; }, [selected.resource.id, selected.resource.storageMode]);
   if (!selected.draft) return <section className="overview-page"><header className="overview-heading"><div><h1>{t("overviewTitle")}</h1><p>{t("noDraftOverview")}</p></div><button className="secondary" onClick={onChangeResource}>{t("changeResource")}</button></header></section>;
   const stats = cardStatistics(selected.draft.data);
   const filled = stats.fieldRows.filter((field) => field.filled).length;
