@@ -3,7 +3,7 @@ import "./App.css";
 import "./AppLayout.css";
 import { AssetsPage } from "./AssetsPage";
 import { AssistantDrawer } from "./AssistantDrawer";
-import { saveCharacterDraft, saveLorebookDraft, savePresetDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
+import { saveCharacterDraft, saveLorebookDraft, savePresetDraft, saveWorldDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
 import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
 import { CharacterFoundationPage } from "./CharacterFoundationPage";
 import { DialogueVoicePage } from "./DialogueVoicePage";
@@ -21,17 +21,19 @@ import { ResourcePicker } from "./ResourcePicker";
 import { RuntimeInstructionsPage } from "./RuntimeInstructionsPage";
 import { ScenarioOpeningsPage } from "./ScenarioOpeningsPage";
 import { SecretInput } from "./SecretInput";
-import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, CharacterDraft, EditorContext, LorebookData, LorebookDraft, PresetData, PresetDraft, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedPreset, SelectedResource, WorldOverview } from "./types";
+import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, CharacterDraft, EditorContext, LorebookData, LorebookDraft, PresetData, PresetDraft, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedPreset, SelectedResource, SelectedWorld, WorldBundleData, WorldDraft, WorldOverview } from "./types";
 import { WorldOverviewPage } from "./WorldOverviewPage";
+import { WORLD_CONFIGS, WORLD_SECTIONS, WorldBundlePage, type WorldPageKey } from "./WorldBundlePage";
 import { threeWayMerge, type MergeConflicts } from "./threeWayMerge";
 import "./Theme.css";
 
-type Page = "resources" | "overview" | "lorebook-overview" | "preset-overview" | "preset" | "world" | "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "lorebook" | "linked-lorebooks" | "extensions" | "mvu" | "assets" | "settings";
+type Page = "resources" | "overview" | "lorebook-overview" | "preset-overview" | "preset" | "world" | "foundation" | "scenes" | "dialogue" | "runtime" | "metadata" | "lorebook" | "linked-lorebooks" | "extensions" | "mvu" | "assets" | "settings" | WorldPageKey;
 const desktopDefault = () => window.matchMedia("(min-width: 721px)").matches;
 const fallback: BootstrapData = { version: "0.1.0", config: { locale: "en-GB", appearance: "system", llm: { provider: "openai", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4.1", contextWindow: 128000, maxOutputTokens: 4096, temperature: 0.7 }, catalogue: { baseUrl: "", apiKey: "" } } };
 const defaults: Record<ProviderKind, { baseUrl: string; model: string }> = { openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1" }, anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-5" }, ollama: { baseUrl: "http://127.0.0.1:11434", model: "llama3.2" }, "openai-compatible": { baseUrl: "", model: "" } };
 const textProposalPaths = new Set(["name", "nickname", "description", "personality", "scenario", "first_mes", "mes_example", "creator_notes", "system_prompt", "post_history_instructions"]);
 const collectionProposalPaths = new Set(["alternate_greetings", "group_only_greetings", "tags"]);
+const cloneWorld = (value: WorldBundleData): WorldBundleData => structuredClone(value);
 
 const applyLorebookProposal = (book: LorebookData, path: string, value: AiProposal["value"]): LorebookData | null => {
   const relative = path.replace(/^(lorebook|character_book)\./, "");
@@ -59,8 +61,8 @@ function App() {
   const [worldStatus, setWorldStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardStatus, setCardStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardDirty, setCardDirty] = useState(false);
-  const [cardBase, setCardBase] = useState<CharacterDraft | LorebookDraft | PresetDraft | null>(null);
-  const [mergeConflict, setMergeConflict] = useState<{ kind: "character" | "lorebook" | "preset"; merged: CharacterCardV3Data | LorebookData | PresetData; conflicts: MergeConflicts; remoteRevision: number; remoteData: CharacterCardV3Data | LorebookData | PresetData } | null>(null);
+  const [cardBase, setCardBase] = useState<CharacterDraft | LorebookDraft | PresetDraft | WorldDraft | null>(null);
+  const [mergeConflict, setMergeConflict] = useState<{ kind: "character" | "lorebook" | "preset" | "world"; merged: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData; conflicts: MergeConflicts; remoteRevision: number; remoteData: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData } | null>(null);
   const [assistantPrompt, setAssistantPrompt] = useState<string | null>(null);
   const [editorContext, setEditorContext] = useState<EditorContext>({ path: null, selectedText: null, cursor: null });
   const t = useMemo(() => (key: MessageKey) => translate(draft.locale, key), [draft.locale]);
@@ -92,7 +94,7 @@ function App() {
   const provider = (kind: ProviderKind) => setDraft((current) => ({ ...current, llm: { ...current.llm, provider: kind, ...defaults[kind] } }));
   const go = (next: Page) => { setPage(next); if (!desktopDefault()) setLeftOpen(false); };
   const save = async () => { setStatus("saving"); try { const config = await saveConfiguration(draft); setDraft(config); setData((current) => ({ ...current, config })); setStatus("saved"); } catch { setStatus("error"); } };
-  const selectResource = (value: SelectedResource) => { setSelected(value); setCardBase(value.draft); setCardDirty(false); setMergeConflict(null); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage(value.resource.resourceType === "sillytavern/lorebook" ? "lorebook-overview" : value.resource.resourceType === "sillytavern/preset" ? "preset-overview" : "overview"); if (!desktopDefault()) setLeftOpen(false); };
+  const selectResource = (value: SelectedResource) => { setSelected(value); setCardBase(value.draft); setCardDirty(false); setMergeConflict(null); setCardStatus("idle"); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage(value.resource.resourceType === "world-simulation-engine/world" ? "world-overview" : value.resource.resourceType === "sillytavern/lorebook" ? "lorebook-overview" : value.resource.resourceType === "sillytavern/preset" ? "preset-overview" : "overview"); if (!desktopDefault()) setLeftOpen(false); };
   const changeResource = () => { setSelected(null); setCardBase(null); setWorldOverview(null); setCardDirty(false); setMergeConflict(null); setEditorContext({ path: null, selectedText: null, cursor: null }); setPage("resources"); };
   const persistWorldOverview = async (next = worldOverview) => {
     if (!next) return;
@@ -100,6 +102,12 @@ function App() {
     try { const saved = await saveWorldOverview(next); setWorldOverview(saved); setWorldStatus("saved"); } catch { setWorldStatus("error"); }
   };
   const acceptProposal = (proposal: AiProposal) => {
+    if (selected?.draft && selected.resource.resourceType === "world-simulation-engine/world" && typeof proposal.value === "string") {
+      const data = cloneWorld(selected.draft.data as WorldBundleData);
+      if (proposal.path === "world.name" || proposal.path === "world.description") data.world[proposal.path.slice(6)] = proposal.value;
+      else { const sectionMatch = proposal.path.match(/^sections\.([^.]+)\.([^.]+)\.([^.]+)$/), promptMatch = proposal.path.match(/^prompts\.([^.]+)\.([^.]+)$/); const rows = sectionMatch ? data.sections[sectionMatch[1]] : promptMatch ? data.prompts : null; const id = sectionMatch?.[2] ?? promptMatch?.[1], field = sectionMatch?.[3] ?? promptMatch?.[2]; const row = rows?.find((item) => String(item.id) === id); if (!row || !field) return false; row[field] = proposal.value; }
+      setSelected({ ...selected, draft: { ...selected.draft, data } } as SelectedWorld); setCardDirty(true); setCardStatus("idle"); return true;
+    }
     if (proposal.path.startsWith("preset.prompts.")) {
       if (!selected?.draft || selected.resource.resourceType !== "sillytavern/preset" || typeof proposal.value !== "string") return false;
       const match = proposal.path.match(/^preset\.prompts\.(\d+)\.(content|name)$/);
@@ -242,6 +250,14 @@ function App() {
     setCardStatus("saving");
     try { await persistPreset(selected.draft.data as PresetData, (cardBase as PresetDraft | null)?.revision ?? selected.draft.revision); } catch { setCardStatus("error"); }
   };
+  const updateWorld = (data: WorldBundleData) => { setSelected((current) => current?.draft && current.resource.resourceType === "world-simulation-engine/world" ? { ...current, draft: { ...current.draft, data } } as SelectedWorld : current); setCardDirty(true); setCardStatus("idle"); };
+  const persistWorld = async (data: WorldBundleData, expectedRevision: number, mergeBase = (cardBase as WorldDraft | null)?.data ?? data) => {
+    if (!selected || selected.resource.resourceType !== "world-simulation-engine/world") return;
+    const outcome = await saveWorldDraft(selected.resource.id, data, expectedRevision);
+    if (!outcome.saved && outcome.current) { const result = threeWayMerge(mergeBase as unknown as Record<string, unknown>, data as unknown as Record<string, unknown>, outcome.current.data as unknown as Record<string, unknown>); if (!Object.keys(result.conflicts).length) return persistWorld(result.merged as unknown as WorldBundleData, outcome.current.revision, outcome.current.data); setMergeConflict({ kind: "world", merged: result.merged as unknown as WorldBundleData, conflicts: result.conflicts, remoteRevision: outcome.current.revision, remoteData: outcome.current.data }); setCardStatus("error"); return; }
+    if (!outcome.saved) throw new Error("Catalogue save returned no World draft"); setSelected({ ...selected, draft: outcome.saved } as SelectedWorld); setCardBase(outcome.saved); setCardDirty(false); setMergeConflict(null); setCardStatus("saved");
+  };
+  const saveWorld = async () => { if (!selected?.draft || selected.resource.resourceType !== "world-simulation-engine/world" || !cardDirty) return; setCardStatus("saving"); try { await persistWorld(selected.draft.data as WorldBundleData, (cardBase as WorldDraft | null)?.revision ?? selected.draft.revision); } catch { setCardStatus("error"); } };
   const mobile = !desktopDefault();
   const closeOverlay = () => { if (mobile) { setLeftOpen(false); setRightOpen(false); } };
   const shellClass = `app-shell ${leftOpen ? "left-open" : "left-closed"} ${rightOpen ? "right-open" : "right-closed"}`;
@@ -259,7 +275,8 @@ function App() {
 
   const standaloneLorebook = selected.resource.resourceType === "sillytavern/lorebook" ? selected as SelectedLorebook : null;
   const standalonePreset = selected.resource.resourceType === "sillytavern/preset" ? selected as SelectedPreset : null;
-  const selectedCharacter = standaloneLorebook || standalonePreset ? null : selected as SelectedCharacter;
+  const selectedWorld = selected.resource.resourceType === "world-simulation-engine/world" ? selected as SelectedWorld : null;
+  const selectedCharacter = standaloneLorebook || standalonePreset || selectedWorld ? null : selected as SelectedCharacter;
   const effectiveShellClass = shellClass;
 
   return <div className={effectiveShellClass}>
@@ -289,6 +306,7 @@ function App() {
         {standalonePreset && <button className={page === "preset-overview" ? "active" : ""} onClick={() => go("preset-overview")}><span>◫</span>{t("overview")}</button>}
         {standalonePreset && <button className={page === "preset" ? "active" : ""} onClick={() => go("preset")}><span>≡</span>{t("presetEditor")}</button>}
         {standalonePreset && <button onClick={changeResource}><span>⇄</span>{t("changeResource")}</button>}
+        {selectedWorld && <><button className={page === "world-overview" ? "active" : ""} onClick={() => go("world-overview")}><span>◫</span>Overview / review</button><button className={page === "world-details" ? "active" : ""} onClick={() => go("world-details")}><span>◎</span>World &amp; author</button>{WORLD_SECTIONS.map((section) => <button key={section} className={page === `world-section:${section}` ? "active" : ""} onClick={() => go(`world-section:${section}`)}><span>◇</span>{section.replace(/_/g, " ")}</button>)}{WORLD_CONFIGS.map((config) => <button key={config} className={page === `world-config:${config}` ? "active" : ""} onClick={() => go(`world-config:${config}`)}><span>⌁</span>{config} config</button>)}<button className={page === "world-prompts" ? "active" : ""} onClick={() => go("world-prompts")}><span>≡</span>Prompts</button><button className={page === "world-workflows" ? "active" : ""} onClick={() => go("world-workflows")}><span>▧</span>Workflows</button><button className={page === "world-media" ? "active" : ""} onClick={() => go("world-media")}><span>▧</span>Media</button><button onClick={changeResource}><span>⇄</span>{t("changeResource")}</button></>}
       </nav>
       <footer className="drawer-footer"><div><strong>{t("appName")}</strong><small>v{data.version}</small></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => go("settings")} aria-label={t("openSettings")} title={t("settings")}>⚙</button></footer>
     </aside>
@@ -298,6 +316,7 @@ function App() {
       {page === "lorebook-overview" && standaloneLorebook && <LorebookOverviewPage selected={standaloneLorebook} dirty={cardDirty} onEdit={() => go("lorebook")} onChangeResource={changeResource} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} t={t} />}
       {page === "preset-overview" && standalonePreset && <PresetOverviewPage selected={standalonePreset} dirty={cardDirty} onEdit={() => go("preset")} onChangeResource={changeResource} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} t={t} />}
       {page === "preset" && standalonePreset && <PresetEditorPage selected={standalonePreset} dirty={cardDirty} status={cardStatus} onChange={updatePreset} onContext={setEditorContext} onSave={() => void savePreset()} onDraft={() => { setAssistantPrompt(translate(standalonePreset.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftPresetPromptText")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
+      {selectedWorld && page.startsWith("world-") && <WorldBundlePage selected={selectedWorld} page={page as WorldPageKey} dirty={cardDirty} status={cardStatus} onChange={updateWorld} onSave={() => void saveWorld()} onContext={setEditorContext} onNavigate={(next) => go(next)} onDraft={() => { setAssistantPrompt(selectedWorld.resource.metadata.language === "zh-cn" ? "请结合完整世界数据包审阅当前选择，并提出可审阅的改写建议。" : "Review the current selection in the complete World bundle and propose a reviewable rewrite."); setRightOpen(true); if (mobile) setLeftOpen(false); }} />}
       {page === "world" && selectedCharacter && worldOverview && <WorldOverviewPage value={worldOverview} status={worldStatus} context={editorContext} onChange={(value) => { setWorldOverview(value); setWorldStatus("idle"); }} onContext={setEditorContext} onSave={() => void persistWorldOverview()} onDraft={() => { setEditorContext({ path: "worldOverview.summary", selectedText: worldOverview.summary || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftWorldPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
       {page === "world" && selectedCharacter && !worldOverview && <p className="loading-text">{t("loading")}</p>}
       {page === "foundation" && selectedCharacter && <CharacterFoundationPage selected={selectedCharacter} castMode={worldOverview?.castMode ?? "fixed-single"} context={editorContext} dirty={cardDirty} status={cardStatus} onChange={updateCard} onContext={setEditorContext} onSave={() => void saveCard()} onDraft={() => { setEditorContext({ path: "description", selectedText: selectedCharacter.draft?.data.description || null, cursor: null }); setAssistantPrompt(translate(selectedCharacter.resource.metadata.language === "zh-cn" ? "zh-CN" : "en-GB", "draftFoundationPrompt")); setRightOpen(true); if (mobile) setLeftOpen(false); }} t={t} />}
@@ -317,7 +336,7 @@ function App() {
     <AssistantDrawer open={rightOpen} onClose={() => setRightOpen(false)} selected={selected} worldOverview={selectedCharacter ? worldOverview : null} context={editorContext} draftPrompt={assistantPrompt} onDraftPromptUsed={consumeAssistantPrompt} providerConfigured={Boolean(data.config.llm.baseUrl && data.config.llm.model && (data.config.llm.provider === "ollama" || data.config.llm.apiKey))} onAccept={acceptProposal} onClearContext={() => setEditorContext({ path: null, selectedText: null, cursor: null })} t={t} />
     {mergeConflict && <ConflictResolutionDialog conflicts={mergeConflict.conflicts} merged={mergeConflict.merged as unknown as Record<string, unknown>} saving={cardStatus === "saving"} onCancel={() => setMergeConflict(null)} onApply={(resolved) => {
       setCardStatus("saving");
-      const task = mergeConflict.kind === "character" ? persistCharacter(resolved as unknown as CharacterCardV3Data, mergeConflict.remoteRevision, mergeConflict.remoteData as CharacterCardV3Data) : mergeConflict.kind === "lorebook" ? persistLorebook(resolved as unknown as LorebookData, mergeConflict.remoteRevision, mergeConflict.remoteData as LorebookData) : persistPreset(resolved as unknown as PresetData, mergeConflict.remoteRevision, mergeConflict.remoteData as PresetData);
+      const task = mergeConflict.kind === "character" ? persistCharacter(resolved as unknown as CharacterCardV3Data, mergeConflict.remoteRevision, mergeConflict.remoteData as CharacterCardV3Data) : mergeConflict.kind === "lorebook" ? persistLorebook(resolved as unknown as LorebookData, mergeConflict.remoteRevision, mergeConflict.remoteData as LorebookData) : mergeConflict.kind === "world" ? persistWorld(resolved as unknown as WorldBundleData, mergeConflict.remoteRevision, mergeConflict.remoteData as WorldBundleData) : persistPreset(resolved as unknown as PresetData, mergeConflict.remoteRevision, mergeConflict.remoteData as PresetData);
       void task.catch(() => setCardStatus("error"));
     }} t={t} />}
   </div>;

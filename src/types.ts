@@ -121,7 +121,21 @@ export interface PresetPromptOrder { character_id: number | string; order: Prese
 export interface PresetData { prompts?: PresetPrompt[]; prompt_order?: PresetPromptOrder[]; [key: string]: JsonValue | PresetPrompt[] | PresetPromptOrder[] | undefined }
 export interface PresetDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: PresetData; revision: number }
 export interface SelectedPreset { resource: CatalogueResource; draft: PresetDraft | null }
-export type SelectedResource = SelectedCharacter | SelectedLorebook | SelectedPreset;
+export interface WorldMediaReference { mediaId: string; imageResourceId: string | null; record: Record<string, JsonValue> }
+export interface WorldBundleData {
+  spec: "wse_world";
+  specVersion: "1.0";
+  world: Record<string, JsonValue>;
+  author: Record<string, JsonValue> | null;
+  sections: Record<string, Array<Record<string, JsonValue>>>;
+  configs: Record<string, Array<Record<string, JsonValue>>>;
+  prompts: Array<Record<string, JsonValue>>;
+  workflows: Array<Record<string, JsonValue>>;
+  media: WorldMediaReference[];
+}
+export interface WorldDraft { id: string; resourceId: string; resourceVersionId: string | null; createdAt: string; updatedAt: string; data: WorldBundleData; revision: number }
+export interface SelectedWorld { resource: CatalogueResource; draft: WorldDraft | null }
+export type SelectedResource = SelectedCharacter | SelectedLorebook | SelectedPreset | SelectedWorld;
 export interface WorldOverview {
   resourceId: string;
   castMode: "fixed-single" | "fixed-ensemble" | "dynamic-ensemble";
@@ -140,9 +154,9 @@ export interface WorldOverview {
   updatedAt: string;
 }
 export interface CreateCharacterInput { name: string; description: string; language: ResourceLanguage; visibility: ResourceVisibility; tags: string[] }
-export interface CreateResourceInput extends CreateCharacterInput { resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset" }
+export interface CreateResourceInput extends CreateCharacterInput { resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset" | "world-simulation-engine/world" }
 export interface EditorContext { path: string | null; selectedText: string | null; cursor: number | null }
 export interface AiProposal { id: string; path: string; value: JsonValue; rationale: string }
 export interface AiMessage { id: string; conversationId: string; role: "user" | "assistant"; content: string; proposals: AiProposal[]; createdAt: string }
 export interface AiConversation { id: string; resourceId: string | null; title: string; createdAt: string; updatedAt: string; messages: AiMessage[] }
-export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | PresetData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }
+export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset" | "world-simulation-engine/world"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }

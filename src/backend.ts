@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CoverImage, CreateResourceInput, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookData, LorebookDraft, LorebookReference, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldOverview } from "./types";
+import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CoverImage, CreateResourceInput, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookData, LorebookDraft, LorebookReference, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldBundleData, WorldDraft, WorldOverview } from "./types";
 export const loadBootstrap = () => invoke<BootstrapData>("load_bootstrap");
 export const saveConfiguration = (config: AppConfig) => invoke<AppConfig>("save_configuration", { config });
 export const listOwnedResources = (resourceType: CreateResourceInput["resourceType"]) => invoke<ResourceList>("list_owned_resources", { resourceType });
@@ -21,6 +21,7 @@ export const createResource = (input: CreateResourceInput) => invoke<SelectedRes
 export const saveCharacterDraft = (resourceId: string, data: CharacterCardV3Data, expectedRevision: number) => invoke<DraftSaveOutcome<CharacterDraft>>("save_character_draft", { resourceId, data, expectedRevision });
 export const saveLorebookDraft = (resourceId: string, data: LorebookData, expectedRevision: number) => invoke<DraftSaveOutcome<LorebookDraft>>("save_lorebook_draft", { resourceId, data, expectedRevision });
 export const savePresetDraft = (resourceId: string, data: PresetData, expectedRevision: number) => invoke<DraftSaveOutcome<PresetDraft>>("save_preset_draft", { resourceId, data, expectedRevision });
+export const saveWorldDraft = (resourceId: string, data: WorldBundleData, expectedRevision: number) => invoke<DraftSaveOutcome<WorldDraft>>("save_world_draft", { resourceId, data, expectedRevision });
 export const listAiConversations = (resourceId: string | null) => invoke<AiConversation[]>("list_ai_conversations", { resourceId });
 export const deleteAiConversation = (conversationId: string) => invoke<void>("delete_ai_conversation", { conversationId });
 export const sendAiMessage = (input: SendAiMessageInput) => invoke<AiConversation>("send_ai_message", { input });
