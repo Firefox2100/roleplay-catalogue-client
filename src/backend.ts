@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CoverImage, CreateResourceInput, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookData, LorebookDraft, LorebookReference, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldBundleData, WorldDraft, WorldOverview } from "./types";
+import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CharacterPlaygroundInput, CharacterPlaygroundResult, CoverImage, CreateResourceInput, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookData, LorebookDraft, LorebookReference, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldBundleData, WorldDraft, WorldOverview } from "./types";
 export const loadBootstrap = () => invoke<BootstrapData>("load_bootstrap");
 export const saveConfiguration = (config: AppConfig) => invoke<AppConfig>("save_configuration", { config });
 export const listOwnedResources = (resourceType: CreateResourceInput["resourceType"]) => invoke<ResourceList>("list_owned_resources", { resourceType });
@@ -31,5 +31,7 @@ export const saveWorldDraft = (resourceId: string, data: WorldBundleData, expect
 export const listAiConversations = (resourceId: string | null) => invoke<AiConversation[]>("list_ai_conversations", { resourceId });
 export const deleteAiConversation = (conversationId: string) => invoke<void>("delete_ai_conversation", { conversationId });
 export const sendAiMessage = (input: SendAiMessageInput) => invoke<AiConversation>("send_ai_message", { input });
+export const runCharacterPlayground = (input: CharacterPlaygroundInput) => invoke<CharacterPlaygroundResult>("run_character_playground", { input });
+export const previewCharacterPlayground = (input: CharacterPlaygroundInput) => invoke<CharacterPlaygroundResult>("preview_character_playground", { input });
 export const loadWorldOverview = (resourceId: string) => invoke<WorldOverview>("load_world_overview", { resourceId });
 export const saveWorldOverview = (overview: WorldOverview) => invoke<WorldOverview>("save_world_overview", { overview });

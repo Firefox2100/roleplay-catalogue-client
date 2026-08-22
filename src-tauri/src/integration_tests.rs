@@ -110,6 +110,8 @@ fn provider_adapters_exchange_real_http_for_all_supported_protocols() {
             &llm_config(provider, base_url),
             &[],
             "Return a small structured response.",
+            true,
+            None,
         ))
         .unwrap();
         assert_eq!(result, expected);
@@ -131,11 +133,46 @@ fn provider_adapters_exchange_real_http_for_all_supported_protocols() {
 #[test]
 fn provider_errors_do_not_expose_credentials() {
     let (base_url, _) = mock_server(401, serde_json::json!({"error": {"message": "denied"}}));
-    let error =
-        tauri::async_runtime::block_on(call_llm(&llm_config("openai", base_url), &[], "Test."))
-            .unwrap_err();
+    let error = tauri::async_runtime::block_on(call_llm(
+        &llm_config("openai", base_url),
+        &[],
+        "Test.",
+        true,
+        None,
+    ))
+    .unwrap_err();
     assert!(error.contains("denied"));
     assert!(!error.contains("integration-secret"));
+}
+
+#[test]
+fn playground_provider_request_is_plain_text_and_injects_late_system_content_after_history() {
+    let (base_url, request) = mock_server(
+        200,
+        serde_json::json!({"choices": [{"message": {"content": "in-character reply"}}]}),
+    );
+    let history = vec![AiMessage {
+        id: "trial".into(),
+        conversation_id: String::new(),
+        role: "user".into(),
+        content: "Hello".into(),
+        proposals: Vec::new(),
+        created_at: String::new(),
+    }];
+    let reply = tauri::async_runtime::block_on(call_llm(
+        &llm_config("openai", base_url),
+        &history,
+        "Character context",
+        false,
+        Some("Post-history instruction"),
+    ))
+    .unwrap();
+    assert_eq!(reply, "in-character reply");
+    let request = request.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!request.contains("response_format"));
+    let user = request.find("Hello").unwrap();
+    let late = request.find("Post-history instruction").unwrap();
+    assert!(user < late);
 }
 
 #[test]

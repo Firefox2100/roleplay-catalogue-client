@@ -2,7 +2,7 @@ export type Locale = "en-GB" | "zh-CN";
 export type AppearanceMode = "light" | "dark" | "system";
 export type ResourceLanguage = "en-uk" | "zh-cn";
 export type ProviderKind = "openai" | "anthropic" | "ollama" | "openai-compatible";
-export interface AppConfig { locale: Locale; appearance: AppearanceMode; llm: { provider: ProviderKind; baseUrl: string; apiKey: string; model: string; contextWindow: number; maxOutputTokens: number; temperature: number }; catalogue: { baseUrl: string; apiKey: string } }
+export interface AppConfig { locale: Locale; appearance: AppearanceMode; llm: { provider: ProviderKind; baseUrl: string; apiKey: string; model: string; contextWindow: number; maxOutputTokens: number; temperature: number }; catalogue: { baseUrl: string; apiKey: string }; testing: { promptTemplate: string } }
 export interface BootstrapData { version: string; config: AppConfig }
 
 export type ResourceVisibility = "private" | "authenticated" | "public";
@@ -160,3 +160,6 @@ export interface AiProposal { id: string; path: string; value: JsonValue; ration
 export interface AiMessage { id: string; conversationId: string; role: "user" | "assistant"; content: string; proposals: AiProposal[]; createdAt: string }
 export interface AiConversation { id: string; resourceId: string | null; title: string; createdAt: string; updatedAt: string; messages: AiMessage[] }
 export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset" | "world-simulation-engine/world"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }
+export interface PlaygroundMessage { role: "user" | "assistant"; content: string }
+export interface CharacterPlaygroundInput { draft: CharacterCardV3Data; messages: PlaygroundMessage[]; userName: string }
+export interface CharacterPlaygroundResult { reply: string; activatedLore: Array<{ id: string; name: string; position: LorebookPosition }>; renderedPrompt: string; approximateInputTokens: number }

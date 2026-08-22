@@ -1,4 +1,6 @@
 .drawer { transform: translateX(-100%); transition: transform .18s ease; }
+.nav-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.drawer-footer { flex: 0 0 auto; }
 .drawer--open { transform: translateX(0); }
 .drawer-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 45px; margin: -8px 0 10px; padding: 0 4px 9px 12px; border-bottom: 1px solid #edf0f2; }
 .drawer-top strong { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
@@ -13,6 +15,12 @@
 .resource-gate-page > .resource-page, .resource-gate-page > .settings-page { max-width: 1080px; margin: 0 auto; }
 .left-closed .dialog-layer { left: 0; }
 .resource-gate-back { display: block; max-width: 1080px; margin: 0 auto 20px; }
+.playground-settings-card > label { display: block; width: 100%; }
+.playground-settings-card textarea { display: block; width: 100%; min-height: 280px; padding: 12px; border: 1px solid #cbd5db; border-radius: 7px; resize: vertical; background: var(--surface, #fff); color: inherit; line-height: 1.5; }
+.playground-settings-card textarea:focus { border-color: #287590; box-shadow: 0 0 0 3px #dceff5; outline: none; }
+.playground-settings-card p { margin: 12px 0 6px; color: var(--muted, #687681); line-height: 1.5; }
+.playground-settings-card small { display: block; color: var(--muted, #74818a); line-height: 1.5; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (min-width: 721px) {
   .left-open .page { margin-left: 264px; }
   .right-open .page { margin-right: 370px; }

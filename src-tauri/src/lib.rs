@@ -35,12 +35,21 @@ struct CatalogueConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TestingConfig {
+    #[serde(default = "default_playground_prompt_template")]
+    prompt_template: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AppConfig {
     locale: String,
     #[serde(default = "default_appearance")]
     appearance: String,
     llm: LlmConfig,
     catalogue: CatalogueConfig,
+    #[serde(default)]
+    testing: TestingConfig,
 }
 
 #[derive(Serialize)]
@@ -586,6 +595,37 @@ struct SendAiMessageInput {
     selection: Option<EditorSelection>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct PlaygroundMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CharacterPlaygroundInput {
+    draft: serde_json::Value,
+    messages: Vec<PlaygroundMessage>,
+    user_name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivatedLore {
+    id: String,
+    name: String,
+    position: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CharacterPlaygroundResult {
+    reply: String,
+    activated_lore: Vec<ActivatedLore>,
+    rendered_prompt: String,
+    approximate_input_tokens: usize,
+}
+
 fn default_appearance() -> String {
     "system".into()
 }
@@ -652,8 +692,21 @@ impl Default for AppConfig {
                 base_url: String::new(),
                 api_key: String::new(),
             },
+            testing: TestingConfig::default(),
         }
     }
+}
+
+impl Default for TestingConfig {
+    fn default() -> Self {
+        Self {
+            prompt_template: default_playground_prompt_template(),
+        }
+    }
+}
+
+fn default_playground_prompt_template() -> String {
+    "Write {{char}}'s next reply in a fictional roleplay with {{user}}. Stay consistent with the character and setting. Do not decide {{user}}'s actions, thoughts, or dialogue.\n\n{{system_prompt}}\n\n{{lore_before}}\n\nCharacter: {{description}}\nPersonality: {{personality}}\nScenario: {{scenario}}\n\n{{lore_after}}\n\nExample dialogue:\n{{mes_example}}".into()
 }
 
 fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -720,6 +773,13 @@ fn validate(config: &AppConfig) -> Result<(), String> {
         || !(0.0..=2.0).contains(&config.llm.temperature)
     {
         return Err("Invalid model parameters".into());
+    }
+    if config.testing.prompt_template.trim().is_empty()
+        || config.testing.prompt_template.len() > 100_000
+    {
+        return Err(
+            "The playground prompt template must contain between 1 and 100000 characters".into(),
+        );
     }
     Ok(())
 }
@@ -1777,6 +1837,8 @@ async fn call_llm(
     config: &LlmConfig,
     messages: &[AiMessage],
     instructions: &str,
+    structured: bool,
+    late_instructions: Option<&str>,
 ) -> Result<String, String> {
     if config.model.trim().is_empty() {
         return Err("LLM model is not configured".into());
@@ -1800,6 +1862,9 @@ async fn call_llm(
         })
         .collect::<Vec<_>>();
     let estimated_input_tokens = (instructions.chars().count()
+        + late_instructions
+            .map(|value| value.chars().count())
+            .unwrap_or(0)
         + messages
             .iter()
             .map(|message| message.content.chars().count())
@@ -1817,9 +1882,13 @@ async fn call_llm(
 
     let request = if config.provider == "anthropic" {
         let url = provider_url(&config.base_url, "/v1/messages")?;
+        let system = late_instructions
+            .filter(|value| !value.trim().is_empty())
+            .map(|late| format!("{instructions}\n\nLate conversation instruction:\n{late}"))
+            .unwrap_or_else(|| instructions.to_owned());
         let body = serde_json::json!({
             "model": config.model,
-            "system": instructions,
+            "system": system,
             "messages": history,
             "max_tokens": config.max_output_tokens,
             "temperature": config.temperature,
@@ -1840,13 +1909,18 @@ async fn call_llm(
         let mut ollama_messages =
             vec![serde_json::json!({"role": "system", "content": instructions})];
         ollama_messages.extend(history);
-        let body = serde_json::json!({
+        if let Some(late) = late_instructions.filter(|value| !value.trim().is_empty()) {
+            ollama_messages.push(serde_json::json!({"role": "system", "content": late}));
+        }
+        let mut body = serde_json::json!({
             "model": config.model,
             "messages": ollama_messages,
             "stream": false,
-            "format": "json",
             "options": {"temperature": config.temperature, "num_predict": config.max_output_tokens},
         });
+        if structured {
+            body["format"] = serde_json::json!("json");
+        }
         let mut request = client.post(&url).json(&body);
         if !config.api_key.trim().is_empty() {
             request = request.bearer_auth(config.api_key.trim());
@@ -1862,6 +1936,9 @@ async fn call_llm(
         let mut openai_messages =
             vec![serde_json::json!({"role": "system", "content": instructions})];
         openai_messages.extend(history);
+        if let Some(late) = late_instructions.filter(|value| !value.trim().is_empty()) {
+            openai_messages.push(serde_json::json!({"role": "system", "content": late}));
+        }
         let output_limit_key = if config.provider == "openai" {
             "max_completion_tokens"
         } else {
@@ -1871,8 +1948,10 @@ async fn call_llm(
             "model": config.model,
             "messages": openai_messages,
             "temperature": config.temperature,
-            "response_format": {"type": "json_object"},
         });
+        if structured {
+            body["response_format"] = serde_json::json!({"type": "json_object"});
+        }
         body[output_limit_key] = serde_json::json!(config.max_output_tokens);
         client
             .post(&url)
@@ -1933,7 +2012,7 @@ async fn call_llm_with_repair(
     instructions: &str,
     resource_language: &str,
 ) -> Result<ModelEnvelope, String> {
-    let first = call_llm(config, messages, instructions).await?;
+    let first = call_llm(config, messages, instructions, true, None).await?;
     let first_envelope = parse_model_envelope(&first);
     let errors = model_envelope_errors(&first_envelope);
     if errors.is_empty() {
@@ -1952,7 +2031,7 @@ async fn call_llm_with_repair(
             "{instructions}\n\nThe previous response failed validation. Return a corrected response in the required JSON shape using UK English. The reply must be a non-empty user-visible message. Every proposal must use an allowed path and contain a correctly typed, non-empty, complete replacement value."
         )
     };
-    let repaired = call_llm(config, messages, &repair_instructions).await?;
+    let repaired = call_llm(config, messages, &repair_instructions, true, None).await?;
     let envelope = parse_model_envelope(&repaired);
     let repair_errors = model_envelope_errors(&envelope);
     if repair_errors.is_empty() {
@@ -1963,6 +2042,310 @@ async fn call_llm_with_repair(
             repair_errors.join("; ")
         ))
     }
+}
+
+fn text_field<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
+    value
+        .get(key)
+        .and_then(|field| field.as_str())
+        .unwrap_or("")
+}
+
+fn lore_key_matches(key: &str, text: &str, use_regex: bool, case_sensitive: bool) -> bool {
+    if use_regex {
+        let (pattern, insensitive) = if let Some(rest) = key.strip_prefix('/') {
+            rest.rsplit_once('/')
+                .map(|(pattern, flags)| (pattern, flags.contains('i')))
+                .unwrap_or((key, !case_sensitive))
+        } else {
+            (key, !case_sensitive)
+        };
+        return regex::RegexBuilder::new(pattern)
+            .case_insensitive(insensitive)
+            .build()
+            .map(|regex| regex.is_match(text))
+            .unwrap_or(false);
+    }
+    if case_sensitive {
+        text.contains(key)
+    } else {
+        text.to_lowercase().contains(&key.to_lowercase())
+    }
+}
+
+fn activated_lore_entries(
+    draft: &serde_json::Value,
+    messages: &[PlaygroundMessage],
+) -> Vec<(ActivatedLore, String)> {
+    let Some(book) = draft
+        .get("character_book")
+        .and_then(|value| value.as_object())
+    else {
+        return Vec::new();
+    };
+    let entries = book
+        .get("entries")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let depth = book
+        .get("scan_depth")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(4)
+        .max(1) as usize;
+    let mut scan = messages
+        .iter()
+        .rev()
+        .take(depth)
+        .rev()
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recursive = book
+        .get("recursive_scanning")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let budget = book
+        .get("token_budget")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(u64::MAX) as usize;
+    let mut selected = Vec::<(i64, usize, ActivatedLore, String)>::new();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..if recursive { 4 } else { 1 } {
+        let mut changed = false;
+        for (index, entry) in entries.iter().enumerate() {
+            if seen.contains(&index)
+                || !entry
+                    .get("enabled")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true)
+            {
+                continue;
+            }
+            let constant = entry
+                .get("constant")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let use_regex = entry
+                .get("use_regex")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let case_sensitive = entry
+                .get("case_sensitive")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let matches = |name: &str| {
+                entry
+                    .get(name)
+                    .and_then(|value| value.as_array())
+                    .map(|keys| {
+                        keys.iter().filter_map(|key| key.as_str()).any(|key| {
+                            !key.is_empty()
+                                && lore_key_matches(key, &scan, use_regex, case_sensitive)
+                        })
+                    })
+                    .unwrap_or(false)
+            };
+            let primary = matches("keys");
+            let selective = entry
+                .get("selective")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if !constant && !(primary && (!selective || matches("secondary_keys"))) {
+                continue;
+            }
+            let content = text_field(entry, "content").trim().to_owned();
+            if content.is_empty() {
+                continue;
+            }
+            let id = entry
+                .get("id")
+                .map(|value| value.to_string().trim_matches('"').to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| (index + 1).to_string());
+            let name = entry
+                .get("name")
+                .or_else(|| entry.get("comment"))
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("Entry {}", index + 1));
+            let position = match entry.get("position").and_then(|value| value.as_str()) {
+                Some("after_char") => "after_char",
+                _ => "before_char",
+            }
+            .to_owned();
+            let order = entry
+                .get("insertion_order")
+                .and_then(|value| value.as_i64())
+                .unwrap_or(index as i64);
+            selected.push((
+                order,
+                index,
+                ActivatedLore { id, name, position },
+                content.clone(),
+            ));
+            seen.insert(index);
+            if recursive {
+                scan.push('\n');
+                scan.push_str(&content);
+            }
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+    selected.sort_by_key(|(order, index, _, _)| (*order, *index));
+    let mut used = 0usize;
+    selected
+        .into_iter()
+        .filter_map(|(_, _, metadata, content)| {
+            let tokens = content.chars().count().div_ceil(4);
+            if used.saturating_add(tokens) > budget {
+                None
+            } else {
+                used += tokens;
+                Some((metadata, content))
+            }
+        })
+        .collect()
+}
+
+fn render_playground_prompt(
+    template: &str,
+    draft: &serde_json::Value,
+    user_name: &str,
+    lore: &[(ActivatedLore, String)],
+) -> String {
+    let lore_text = |position: &str| {
+        lore.iter()
+            .filter(|(entry, _)| entry.position == position)
+            .map(|(_, content)| content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    let replacements = [
+        ("{{char}}", text_field(draft, "name")),
+        ("{{user}}", user_name),
+        ("{{description}}", text_field(draft, "description")),
+        ("{{personality}}", text_field(draft, "personality")),
+        ("{{scenario}}", text_field(draft, "scenario")),
+        ("{{mes_example}}", text_field(draft, "mes_example")),
+        ("{{system_prompt}}", text_field(draft, "system_prompt")),
+    ];
+    let mut rendered = template.to_owned();
+    for (placeholder, value) in replacements {
+        rendered = rendered.replace(placeholder, value);
+    }
+    rendered = rendered
+        .replace("{{lore_before}}", &lore_text("before_char"))
+        .replace("{{lore_after}}", &lore_text("after_char"));
+    rendered
+        .replace("{{char}}", text_field(draft, "name"))
+        .replace("{{user}}", user_name)
+}
+
+fn assemble_character_playground(
+    config: &AppConfig,
+    input: &CharacterPlaygroundInput,
+) -> CharacterPlaygroundResult {
+    let lore = activated_lore_entries(&input.draft, &input.messages);
+    let rendered = render_playground_prompt(
+        &config.testing.prompt_template,
+        &input.draft,
+        input.user_name.trim(),
+        &lore,
+    );
+    let late = text_field(&input.draft, "post_history_instructions").trim();
+    let approximate_input_tokens = (rendered.chars().count()
+        + late.chars().count()
+        + input
+            .messages
+            .iter()
+            .map(|message| message.content.chars().count())
+            .sum::<usize>())
+    .div_ceil(4);
+    let mut prompt_sections = vec![format!("[SYSTEM]\n{rendered}")];
+    prompt_sections.extend(
+        input
+            .messages
+            .iter()
+            .map(|message| format!("[{}]\n{}", message.role.to_uppercase(), message.content)),
+    );
+    if !late.is_empty() {
+        prompt_sections.push(format!("[POST-HISTORY SYSTEM]\n{late}"));
+    }
+    CharacterPlaygroundResult {
+        reply: String::new(),
+        activated_lore: lore.into_iter().map(|(entry, _)| entry).collect(),
+        rendered_prompt: prompt_sections.join("\n\n"),
+        approximate_input_tokens,
+    }
+}
+
+fn validate_playground_messages(
+    messages: &[PlaygroundMessage],
+    require_message: bool,
+) -> Result<(), String> {
+    if (require_message && messages.is_empty()) || messages.len() > 100 {
+        return Err("A trial requires between 1 and 100 messages".into());
+    }
+    if messages.iter().any(|message| {
+        !matches!(message.role.as_str(), "user" | "assistant") || message.content.trim().is_empty()
+    }) {
+        return Err("Trial messages must have a supported role and non-empty content".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn preview_character_playground(
+    app: AppHandle,
+    input: CharacterPlaygroundInput,
+) -> Result<CharacterPlaygroundResult, String> {
+    validate_playground_messages(&input.messages, false)?;
+    Ok(assemble_character_playground(&read_config(&app)?, &input))
+}
+
+#[tauri::command]
+async fn run_character_playground(
+    app: AppHandle,
+    input: CharacterPlaygroundInput,
+) -> Result<CharacterPlaygroundResult, String> {
+    validate_playground_messages(&input.messages, true)?;
+    let config = read_config(&app)?;
+    let lore = activated_lore_entries(&input.draft, &input.messages);
+    let rendered_prompt = render_playground_prompt(
+        &config.testing.prompt_template,
+        &input.draft,
+        input.user_name.trim(),
+        &lore,
+    );
+    let late = text_field(&input.draft, "post_history_instructions").trim();
+    let messages = input
+        .messages
+        .iter()
+        .enumerate()
+        .map(|(index, message)| AiMessage {
+            id: format!("trial-{index}"),
+            conversation_id: String::new(),
+            role: message.role.clone(),
+            content: message
+                .content
+                .replace("{{char}}", text_field(&input.draft, "name"))
+                .replace("{{user}}", input.user_name.trim()),
+            proposals: Vec::new(),
+            created_at: String::new(),
+        })
+        .collect::<Vec<_>>();
+    let mut result = assemble_character_playground(&config, &input);
+    let reply = call_llm(&config.llm, &messages, &rendered_prompt, false, Some(late)).await?;
+    if reply.trim().is_empty() {
+        return Err("The provider returned an empty trial response".into());
+    }
+    result.reply = reply;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -3099,6 +3482,8 @@ pub fn run() {
             list_ai_conversations,
             delete_ai_conversation,
             send_ai_message,
+            run_character_playground,
+            preview_character_playground,
             load_world_overview,
             save_world_overview
         ])
@@ -3109,14 +3494,94 @@ pub fn run() {
 #[cfg(test)]
 mod unit_tests {
     use super::{
-        assistant_instructions, card_data_from_bytes, catalogue_urls, decode_current_draft,
-        initialise_database, local_id, looks_like_frontend_html, lorebook_data_from_bytes,
-        lorebook_proposal_kind, model_envelope_errors, parse_model_envelope, preset_proposal,
-        replace_local_world_bundle, response_excerpt, AppConfig, CatalogueResource, BASE64,
+        activated_lore_entries, assemble_character_playground, assistant_instructions,
+        card_data_from_bytes, catalogue_urls, decode_current_draft, initialise_database, local_id,
+        looks_like_frontend_html, lorebook_data_from_bytes, lorebook_proposal_kind,
+        model_envelope_errors, parse_model_envelope, preset_proposal, render_playground_prompt,
+        replace_local_world_bundle, response_excerpt, AppConfig, CatalogueResource,
+        CharacterPlaygroundInput, PlaygroundMessage, BASE64,
     };
     use base64::Engine as _;
     use rusqlite::Connection;
     use std::io::{Cursor, Write};
+
+    #[test]
+    fn playground_activates_constant_selective_regex_and_recursive_lore() {
+        let draft = serde_json::json!({"character_book":{"scan_depth":2,"token_budget":200,"recursive_scanning":true,"entries":[
+            {"id":1,"name":"Always","content":"harbour signal","enabled":true,"constant":true,"use_regex":false,"insertion_order":1,"position":"before_char","keys":[]},
+            {"id":2,"name":"Selective","content":"dock details","enabled":true,"constant":false,"selective":true,"use_regex":false,"insertion_order":2,"position":"after_char","keys":["harbour"],"secondary_keys":["signal"]},
+            {"id":3,"name":"Regex","content":"weather details","enabled":true,"constant":false,"use_regex":true,"insertion_order":3,"keys":["/storm(s)?/i"]}
+        ]}});
+        let messages = vec![PlaygroundMessage {
+            role: "user".into(),
+            content: "STORMS arrive".into(),
+        }];
+        let lore = activated_lore_entries(&draft, &messages);
+        assert_eq!(lore.len(), 3);
+        assert_eq!(lore[0].0.name, "Always");
+        assert_eq!(lore[1].0.position, "after_char");
+        assert_eq!(lore[2].0.name, "Regex");
+    }
+
+    #[test]
+    fn playground_template_preserves_injection_positions() {
+        let draft = serde_json::json!({"name":"Ada","description":"Explorer","personality":"Curious","scenario":"Harbour","mes_example":"Example","system_prompt":"Stay grounded"});
+        let lore = vec![
+            (
+                super::ActivatedLore {
+                    id: "1".into(),
+                    name: "Before".into(),
+                    position: "before_char".into(),
+                },
+                "Before lore".into(),
+            ),
+            (
+                super::ActivatedLore {
+                    id: "2".into(),
+                    name: "After".into(),
+                    position: "after_char".into(),
+                },
+                "After lore".into(),
+            ),
+        ];
+        assert_eq!(
+            render_playground_prompt(
+                "{{char}}/{{user}}/{{lore_before}}/{{description}}/{{lore_after}}",
+                &draft,
+                "Sam",
+                &lore
+            ),
+            "Ada/Sam/Before lore/Explorer/After lore"
+        );
+    }
+
+    #[test]
+    fn playground_preview_contains_the_complete_provider_input() {
+        let draft = serde_json::json!({
+            "name":"Ada",
+            "description":"Explorer",
+            "post_history_instructions":"End in dialogue.",
+            "character_book":{"entries":[
+                {"id":1,"name":"Signal","content":"The signal is blue.","constant":false,"keys":["signal"],"position":"before_char"}
+            ]}
+        });
+        let input = CharacterPlaygroundInput {
+            draft,
+            messages: vec![PlaygroundMessage {
+                role: "user".into(),
+                content: "Check the signal".into(),
+            }],
+            user_name: "Sam".into(),
+        };
+        let preview = assemble_character_playground(&AppConfig::default(), &input);
+        assert!(preview.rendered_prompt.contains("[SYSTEM]"));
+        assert!(preview.rendered_prompt.contains("The signal is blue."));
+        assert!(preview.rendered_prompt.contains("[USER]\nCheck the signal"));
+        assert!(preview
+            .rendered_prompt
+            .contains("[POST-HISTORY SYSTEM]\nEnd in dialogue."));
+        assert_eq!(preview.activated_lore.len(), 1);
+    }
 
     #[test]
     fn imports_only_v3_card_and_lorebook_documents() {
