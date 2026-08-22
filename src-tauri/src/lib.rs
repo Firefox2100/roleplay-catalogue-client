@@ -604,9 +604,27 @@ struct PlaygroundMessage {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CharacterPlaygroundInput {
+    #[serde(default)]
+    linked_lorebooks: Vec<LorebookReference>,
     draft: serde_json::Value,
     messages: Vec<PlaygroundMessage>,
     user_name: String,
+    preset: Option<PlaygroundPresetReference>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaygroundPresetReference {
+    resource_id: String,
+    version_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaygroundPresetOption {
+    resource: CatalogueResource,
+    versions: Vec<ResourceVersionSummary>,
+    draft_available: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -621,6 +639,14 @@ struct ActivatedLore {
 #[serde(rename_all = "camelCase")]
 struct CharacterPlaygroundResult {
     reply: String,
+    activated_lore: Vec<ActivatedLore>,
+    rendered_prompt: String,
+    approximate_input_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LorebookActivationResult {
     activated_lore: Vec<ActivatedLore>,
     rendered_prompt: String,
     approximate_input_tokens: usize,
@@ -2246,18 +2272,123 @@ fn render_playground_prompt(
         .replace("{{user}}", user_name)
 }
 
+fn replace_playground_macros(value: &str, draft: &serde_json::Value, user_name: &str) -> String {
+    value
+        .replace("{{char}}", text_field(draft, "name"))
+        .replace("{{user}}", user_name)
+        .replace("{{description}}", text_field(draft, "description"))
+        .replace("{{personality}}", text_field(draft, "personality"))
+        .replace("{{scenario}}", text_field(draft, "scenario"))
+}
+
+fn render_playground_preset(
+    preset: &serde_json::Value,
+    draft: &serde_json::Value,
+    user_name: &str,
+    lore: &[(ActivatedLore, String)],
+) -> (String, String) {
+    let lore_text = |position: &str| {
+        lore.iter()
+            .filter(|(entry, _)| entry.position == position)
+            .map(|(_, content)| content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    let prompts = preset
+        .get("prompts")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let order_sets = preset
+        .get("prompt_order")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let order = order_sets
+        .iter()
+        .find(|value| value.get("character_id").and_then(|id| id.as_i64()) == Some(100000))
+        .or_else(|| order_sets.first())
+        .and_then(|value| value.get("order"))
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_else(|| {
+            prompts
+                .iter()
+                .filter_map(|prompt| prompt.get("identifier").and_then(|id| id.as_str()))
+                .map(|identifier| serde_json::json!({"identifier":identifier,"enabled":true}))
+                .collect()
+        });
+    let mut sections = Vec::new();
+    let mut late = Vec::new();
+    for item in order {
+        if !item
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let Some(identifier) = item.get("identifier").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if identifier == "chatHistory" {
+            continue;
+        }
+        let prompt = prompts.iter().find(|prompt| {
+            prompt.get("identifier").and_then(|value| value.as_str()) == Some(identifier)
+        });
+        let content = match identifier {
+            "worldInfoBefore" => lore_text("before_char"),
+            "worldInfoAfter" => lore_text("after_char"),
+            "charDescription" => text_field(draft, "description").to_owned(),
+            "charPersonality" => text_field(draft, "personality").to_owned(),
+            "scenario" => text_field(draft, "scenario").to_owned(),
+            "dialogueExamples" => text_field(draft, "mes_example").to_owned(),
+            "personaDescription" => String::new(),
+            _ => prompt
+                .and_then(|value| value.get("content"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_owned(),
+        };
+        let content = replace_playground_macros(&content, draft, user_name);
+        if content.trim().is_empty() {
+            continue;
+        }
+        if identifier == "jailbreak" {
+            late.push(content);
+        } else {
+            sections.push(content);
+        }
+    }
+    let card_late = text_field(draft, "post_history_instructions").trim();
+    if !card_late.is_empty() {
+        late.push(card_late.to_owned());
+    }
+    (sections.join("\n\n"), late.join("\n\n"))
+}
+
 fn assemble_character_playground(
     config: &AppConfig,
     input: &CharacterPlaygroundInput,
+    preset: Option<&serde_json::Value>,
 ) -> CharacterPlaygroundResult {
     let lore = activated_lore_entries(&input.draft, &input.messages);
-    let rendered = render_playground_prompt(
-        &config.testing.prompt_template,
-        &input.draft,
-        input.user_name.trim(),
-        &lore,
-    );
-    let late = text_field(&input.draft, "post_history_instructions").trim();
+    let (rendered, late) = if let Some(preset) = preset {
+        render_playground_preset(preset, &input.draft, input.user_name.trim(), &lore)
+    } else {
+        (
+            render_playground_prompt(
+                &config.testing.prompt_template,
+                &input.draft,
+                input.user_name.trim(),
+                &lore,
+            ),
+            text_field(&input.draft, "post_history_instructions")
+                .trim()
+                .to_owned(),
+        )
+    };
     let approximate_input_tokens = (rendered.chars().count()
         + late.chars().count()
         + input
@@ -2299,13 +2430,138 @@ fn validate_playground_messages(
     Ok(())
 }
 
+fn document_data(value: serde_json::Value) -> Result<serde_json::Value, String> {
+    value
+        .get("data")
+        .cloned()
+        .ok_or_else(|| "Catalogue resource data response did not contain data".to_string())
+}
+
+fn merge_linked_playground_lorebooks(
+    draft: &mut serde_json::Value,
+    mut books: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    if books.is_empty() {
+        return Ok(());
+    }
+    let embedded = draft
+        .get("character_book")
+        .filter(|value| value.is_object())
+        .cloned();
+    let mut base = embedded.unwrap_or_else(|| books.remove(0));
+    let entries = base
+        .get_mut("entries")
+        .and_then(|value| value.as_array_mut())
+        .ok_or_else(|| "A linked lorebook did not contain an entries array".to_string())?;
+    for book in books {
+        let linked_entries = book
+            .get("entries")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| "A linked lorebook did not contain an entries array".to_string())?;
+        entries.extend(linked_entries.iter().cloned());
+    }
+    draft["character_book"] = base;
+    Ok(())
+}
+
+async fn resolve_playground_input(
+    app: &AppHandle,
+    mut input: CharacterPlaygroundInput,
+) -> Result<(CharacterPlaygroundInput, Option<serde_json::Value>), String> {
+    let mut books = Vec::new();
+    for link in &input.linked_lorebooks {
+        let path = link.version_id.as_ref().map_or_else(
+            || format!("/resources/{}/data", link.resource_id),
+            |version_id| format!("/versions/{version_id}/data"),
+        );
+        let document: serde_json::Value =
+            catalogue_json(app, reqwest::Method::GET, &path, None).await?;
+        books.push(document_data(document)?);
+    }
+    merge_linked_playground_lorebooks(&mut input.draft, books)?;
+    let preset = if let Some(reference) = &input.preset {
+        let path = reference.version_id.as_ref().map_or_else(
+            || format!("/resources/{}/data", reference.resource_id),
+            |version_id| format!("/versions/{version_id}/data"),
+        );
+        let document: serde_json::Value =
+            catalogue_json(app, reqwest::Method::GET, &path, None).await?;
+        Some(document_data(document)?)
+    } else {
+        None
+    };
+    Ok((input, preset))
+}
+
 #[tauri::command]
-fn preview_character_playground(
+async fn list_playground_presets(app: AppHandle) -> Result<Vec<PlaygroundPresetOption>, String> {
+    let user: CurrentUser = catalogue_json(&app, reqwest::Method::GET, "/auth/me", None).await?;
+    let resources: ResourceList = catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        "/resources?resourceType=sillytavern%2Fpreset&limit=100",
+        None,
+    )
+    .await?;
+    let mut result = Vec::with_capacity(resources.items.len());
+    for resource in resources.items {
+        let versions = catalogue_json(
+            &app,
+            reqwest::Method::GET,
+            &format!("/versions/resource/{}?limit=100", resource.id),
+            None,
+        )
+        .await?;
+        let draft_available = resource.draft_data_id.is_some()
+            && (resource.author_id == user.id || resource.co_author_ids.contains(&user.id));
+        result.push(PlaygroundPresetOption {
+            resource,
+            versions,
+            draft_available,
+        });
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn preview_lorebook_activation(
+    draft: serde_json::Value,
+    text: String,
+) -> Result<LorebookActivationResult, String> {
+    let wrapper = serde_json::json!({"character_book": draft});
+    let messages = if text.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![PlaygroundMessage {
+            role: "user".into(),
+            content: text.trim().into(),
+        }]
+    };
+    let lore = activated_lore_entries(&wrapper, &messages);
+    let rendered_prompt = lore
+        .iter()
+        .map(|(entry, content)| format!("[{}: {}]\n{}", entry.position, entry.name, content))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Ok(LorebookActivationResult {
+        activated_lore: lore.into_iter().map(|(entry, _)| entry).collect(),
+        approximate_input_tokens: rendered_prompt.chars().count().div_ceil(4),
+        rendered_prompt,
+    })
+}
+
+#[tauri::command]
+async fn preview_character_playground(
     app: AppHandle,
     input: CharacterPlaygroundInput,
 ) -> Result<CharacterPlaygroundResult, String> {
     validate_playground_messages(&input.messages, false)?;
-    Ok(assemble_character_playground(&read_config(&app)?, &input))
+    let (input, preset) = resolve_playground_input(&app, input).await?;
+    Ok(assemble_character_playground(
+        &read_config(&app)?,
+        &input,
+        preset.as_ref(),
+    ))
 }
 
 #[tauri::command]
@@ -2314,15 +2570,24 @@ async fn run_character_playground(
     input: CharacterPlaygroundInput,
 ) -> Result<CharacterPlaygroundResult, String> {
     validate_playground_messages(&input.messages, true)?;
+    let (input, preset) = resolve_playground_input(&app, input).await?;
     let config = read_config(&app)?;
     let lore = activated_lore_entries(&input.draft, &input.messages);
-    let rendered_prompt = render_playground_prompt(
-        &config.testing.prompt_template,
-        &input.draft,
-        input.user_name.trim(),
-        &lore,
-    );
-    let late = text_field(&input.draft, "post_history_instructions").trim();
+    let (rendered_prompt, late) = if let Some(preset) = preset.as_ref() {
+        render_playground_preset(preset, &input.draft, input.user_name.trim(), &lore)
+    } else {
+        (
+            render_playground_prompt(
+                &config.testing.prompt_template,
+                &input.draft,
+                input.user_name.trim(),
+                &lore,
+            ),
+            text_field(&input.draft, "post_history_instructions")
+                .trim()
+                .to_owned(),
+        )
+    };
     let messages = input
         .messages
         .iter()
@@ -2339,8 +2604,9 @@ async fn run_character_playground(
             created_at: String::new(),
         })
         .collect::<Vec<_>>();
-    let mut result = assemble_character_playground(&config, &input);
-    let reply = call_llm(&config.llm, &messages, &rendered_prompt, false, Some(late)).await?;
+    let mut result = assemble_character_playground(&config, &input, preset.as_ref());
+    let late_prompt = (!late.trim().is_empty()).then_some(late.as_str());
+    let reply = call_llm(&config.llm, &messages, &rendered_prompt, false, late_prompt).await?;
     if reply.trim().is_empty() {
         return Err("The provider returned an empty trial response".into());
     }
@@ -3484,6 +3750,8 @@ pub fn run() {
             send_ai_message,
             run_character_playground,
             preview_character_playground,
+            list_playground_presets,
+            preview_lorebook_activation,
             load_world_overview,
             save_world_overview
         ])
@@ -3497,7 +3765,8 @@ mod unit_tests {
         activated_lore_entries, assemble_character_playground, assistant_instructions,
         card_data_from_bytes, catalogue_urls, decode_current_draft, initialise_database, local_id,
         looks_like_frontend_html, lorebook_data_from_bytes, lorebook_proposal_kind,
-        model_envelope_errors, parse_model_envelope, preset_proposal, render_playground_prompt,
+        merge_linked_playground_lorebooks, model_envelope_errors, parse_model_envelope,
+        preset_proposal, render_playground_preset, render_playground_prompt,
         replace_local_world_bundle, response_excerpt, AppConfig, CatalogueResource,
         CharacterPlaygroundInput, PlaygroundMessage, BASE64,
     };
@@ -3566,14 +3835,16 @@ mod unit_tests {
             ]}
         });
         let input = CharacterPlaygroundInput {
+            linked_lorebooks: Vec::new(),
             draft,
             messages: vec![PlaygroundMessage {
                 role: "user".into(),
                 content: "Check the signal".into(),
             }],
             user_name: "Sam".into(),
+            preset: None,
         };
-        let preview = assemble_character_playground(&AppConfig::default(), &input);
+        let preview = assemble_character_playground(&AppConfig::default(), &input, None);
         assert!(preview.rendered_prompt.contains("[SYSTEM]"));
         assert!(preview.rendered_prompt.contains("The signal is blue."));
         assert!(preview.rendered_prompt.contains("[USER]\nCheck the signal"));
@@ -3581,6 +3852,51 @@ mod unit_tests {
             .rendered_prompt
             .contains("[POST-HISTORY SYSTEM]\nEnd in dialogue."));
         assert_eq!(preview.activated_lore.len(), 1);
+    }
+
+    #[test]
+    fn playground_preset_resolves_standard_markers_in_order() {
+        let draft = serde_json::json!({"name":"Ada","description":"Explorer","personality":"Curious","scenario":"Harbour","mes_example":"Example","post_history_instructions":"Card late"});
+        let preset = serde_json::json!({
+            "prompts":[
+                {"identifier":"main","content":"Reply as {{char}} to {{user}}"},
+                {"identifier":"worldInfoBefore","marker":true},
+                {"identifier":"charDescription","marker":true},
+                {"identifier":"jailbreak","content":"Preset late"}
+            ],
+            "prompt_order":[{"character_id":100000,"order":[
+                {"identifier":"main","enabled":true},
+                {"identifier":"worldInfoBefore","enabled":true},
+                {"identifier":"charDescription","enabled":true},
+                {"identifier":"jailbreak","enabled":true}
+            ]}]
+        });
+        let lore = vec![(
+            super::ActivatedLore {
+                id: "1".into(),
+                name: "Signal".into(),
+                position: "before_char".into(),
+            },
+            "Blue signal".into(),
+        )];
+        let (system, late) = render_playground_preset(&preset, &draft, "Sam", &lore);
+        assert_eq!(system, "Reply as Ada to Sam\n\nBlue signal\n\nExplorer");
+        assert_eq!(late, "Preset late\n\nCard late");
+    }
+
+    #[test]
+    fn playground_keeps_embedded_lore_before_linked_books() {
+        let mut draft = serde_json::json!({"character_book":{"name":"Embedded","entries":[{"id":1,"content":"Embedded entry"}]}});
+        let books = vec![
+            serde_json::json!({"name":"First link","entries":[{"id":2,"content":"First linked entry"}]}),
+            serde_json::json!({"name":"Second link","entries":[{"id":3,"content":"Second linked entry"}]}),
+        ];
+        merge_linked_playground_lorebooks(&mut draft, books).unwrap();
+        let entries = draft["character_book"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0]["id"], 1);
+        assert_eq!(entries[1]["id"], 2);
+        assert_eq!(entries[2]["id"], 3);
     }
 
     #[test]

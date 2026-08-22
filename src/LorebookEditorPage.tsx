@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { previewLorebookActivation } from "./backend";
 import type { MessageKey } from "./i18n";
 import { estimateTokens } from "./OverviewPage";
-import type { EditorContext, LorebookData, LorebookDraft, LorebookEntry } from "./types";
+import type { EditorContext, LorebookActivationResult, LorebookData, LorebookDraft, LorebookEntry } from "./types";
 import "./LorebookEditorPage.css";
 
 const blankBook = (name: string): LorebookData => ({ name, description: "", scan_depth: null, token_budget: null, recursive_scanning: false, extensions: {}, entries: [] });
@@ -19,26 +20,6 @@ const compileRegex = (pattern: string, caseSensitive: boolean | null | undefined
   return new RegExp(source, flags);
 };
 const regexValid = (pattern: string) => { try { compileRegex(pattern); return true; } catch { return false; } };
-const matchesKey = (entry: LorebookEntry, key: string, text: string) => {
-  if (entry.use_regex) { try { return compileRegex(key, entry.case_sensitive).test(text); } catch { return false; } }
-  return entry.case_sensitive ? text.includes(key) : text.toLocaleLowerCase().includes(key.toLocaleLowerCase());
-};
-const simulateActivation = (book: LorebookData, initial: string) => {
-  const active = new Set<number>();
-  let searchable = initial;
-  for (let pass = 0; pass < (book.recursive_scanning ? 10 : 1); pass += 1) {
-    let changed = false;
-    book.entries.forEach((entry, index) => {
-      if (!entry.enabled || active.has(index)) return;
-      const primary = entry.keys.some((key) => matchesKey(entry, key, searchable));
-      const secondary = (entry.secondary_keys ?? []).some((key) => matchesKey(entry, key, searchable));
-      if (entry.constant || primary && (!entry.selective || secondary)) { active.add(index); searchable += `\n${entry.content}`; changed = true; }
-    });
-    if (!changed) break;
-  }
-  return active;
-};
-
 export function LorebookEditorPage({ value, fallbackName, embedded, dirty, status, conflict = null, localRevision = 0, onUseServerDraft, onRetryConflict, onChange, onContext, onDraft, onSave, t }: {
   value: LorebookData | null;
   fallbackName: string;
@@ -60,6 +41,7 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [discardConflictOpen, setDiscardConflictOpen] = useState(false);
   const [testText, setTestText] = useState("");
+  const [activation, setActivation] = useState<LorebookActivationResult | null>(null);
   useEffect(() => {
     const length = value?.entries.length ?? 0;
     setEntryKeys((keys) => length === keys.length ? keys : [...keys.slice(0, length), ...Array.from({ length: Math.max(0, length - keys.length) }, newKey)]);
@@ -67,7 +49,13 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
   const selectedIndex = selectedKey ? entryKeys.indexOf(selectedKey) : -1;
   const selected = selectedIndex >= 0 ? value?.entries[selectedIndex] ?? null : null;
   const totalTokens = useMemo(() => (value?.entries ?? []).reduce((sum, entry) => sum + estimateTokens(entry.content), 0), [value]);
-  const activeEntries = useMemo(() => value ? simulateActivation(value, testText) : new Set<number>(), [value, testText]);
+  useEffect(() => {
+    if (!value) return;
+    const timer = window.setTimeout(() => { void previewLorebookActivation(value, testText).then(setActivation).catch(() => setActivation(null)); }, 300);
+    return () => window.clearTimeout(timer);
+  }, [testText, value]);
+  const activeEntries = useMemo(() => new Set((activation?.activatedLore ?? []).map((entry) => entry.id)), [activation]);
+  const entryActive = (entry: LorebookEntry, index: number) => activeEntries.has(String(entry.id ?? index + 1));
   const diagnostics = useMemo(() => (value?.entries ?? []).flatMap<LorebookDiagnostic>((entry, index) => {
     const issues: LorebookDiagnostic[] = [];
     if (entry.enabled && !entry.content.trim()) issues.push({ level: "error", entry: index, message: "emptyLoreContent" });
@@ -115,8 +103,8 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
     <header className="lorebook-heading"><div><p className="lorebook-eyebrow">{embedded ? t("embeddedInCharacter") : t("standaloneLorebook")}</p><h1>{t("lorebookEditor")}</h1><p>{t("lorebookIntro")}</p></div><div className="lorebook-heading-actions"><button className="secondary" onClick={onDraft}>{t("draftLoreEntry")}</button><div className="lorebook-heading-stats"><strong>{value.entries.length}</strong><span>{t("loreEntries")}</span><strong>~{totalTokens}</strong><span>{t("approximateTokens")}</span></div></div></header>
     {conflict && <section className="lorebook-conflict" role="alert"><div><h2>{t("draftConflict")}</h2><p>{t("draftConflictDetail")}</p><small>{t("localRevision")}: {localRevision} · {t("serverRevision")}: {conflict.revision}</small></div><div><button className="secondary" onClick={() => setDiscardConflictOpen(true)}>{t("useServerDraft")}</button><button className="primary" onClick={onRetryConflict}>{t("retryLocalDraft")}</button></div></section>}
     <section className="lorebook-settings"><h2>{t("lorebookSettings")}</h2><div className="lorebook-settings-grid"><label>{t("lorebookName")}<input value={value.name ?? ""} onFocus={() => contextFor("name", value.name ?? null)} onChange={(event) => updateBook("name", event.target.value)} /></label><label>{t("scanDepth")}<input type="number" min="0" value={value.scan_depth ?? ""} onChange={(event) => updateBook("scan_depth", event.target.value === "" ? null : Number(event.target.value))} /></label><label>{t("tokenBudget")}<input type="number" min="0" value={value.token_budget ?? ""} onChange={(event) => updateBook("token_budget", event.target.value === "" ? null : Number(event.target.value))} /></label><label className="lorebook-check"><input type="checkbox" checked={value.recursive_scanning ?? false} onChange={(event) => updateBook("recursive_scanning", event.target.checked)} />{t("recursiveScanning")}</label></div><label className="lorebook-description">{t("description")}<textarea rows={3} value={value.description ?? ""} onFocus={() => contextFor("description", value.description ?? null)} onChange={(event) => updateBook("description", event.target.value)} /></label></section>
-    <section className="lorebook-tools"><div className="activation-tester"><h2>{t("activationTester")}</h2><p>{t("activationTesterHint")}</p><textarea rows={4} value={testText} onChange={(event) => setTestText(event.target.value)} placeholder={t("activationTestPlaceholder")} /><div><strong>{t("activatedEntries")}</strong><span>{activeEntries.size ? [...activeEntries].map((index) => value.entries[index].name?.trim() || `${t("entry")} ${index + 1}`).join(", ") : t("noneActivated")}</span></div></div><div className="lorebook-diagnostics"><h2>{t("lorebookDiagnostics")}</h2><p>{diagnostics.length ? t("diagnosticsFound") : t("noLorebookProblems")}</p>{diagnostics.length > 0 && <ul>{diagnostics.map((issue, index) => <li className={issue.level} key={`${issue.entry}-${issue.message}-${index}`}><button onClick={() => setSelectedKey(entryKeys[issue.entry])}>{t("entry")} {issue.entry + 1}: {t(issue.message)}</button></li>)}</ul>}</div></section>
-    <div className="lorebook-workspace"><aside className="lorebook-entry-list"><header><div><h2>{t("entries")}</h2><span>{value.entries.length}</span></div><button className="primary" onClick={addEntry}>{t("addEntry")}</button></header>{value.entries.length === 0 ? <p>{t("noLoreEntries")}</p> : <div>{value.entries.map((entry, index) => <button key={entryKeys[index]} className={`${selectedKey === entryKeys[index] ? "active" : ""} ${activeEntries.has(index) ? "activated" : ""}`} onClick={() => { setSelectedKey(entryKeys[index]); contextFor(`entries.${index}.content`, entry.content || null); }}><strong>{entry.name?.trim() || entry.comment?.trim() || `${t("entry")} ${index + 1}`}</strong><small>{entry.constant ? t("constantEntry") : entry.keys.length ? entry.keys.join(", ") : t("noKeys")}</small><span>{activeEntries.has(index) ? t("activated") : entry.enabled ? t("enabled") : t("disabled")}</span></button>)}</div>}</aside>
+    <section className="lorebook-tools"><div className="activation-tester"><h2>{t("activationTester")}</h2><p>{t("activationTesterHint")}</p><textarea rows={4} value={testText} onChange={(event) => setTestText(event.target.value)} onBlur={() => void previewLorebookActivation(value, testText).then(setActivation).catch(() => setActivation(null))} placeholder={t("activationTestPlaceholder")} /><div><strong>{t("activatedEntries")}</strong><span>{activation?.activatedLore.length ? activation.activatedLore.map((entry) => entry.name).join(", ") : t("noneActivated")}</span></div>{activation?.renderedPrompt && <details><summary>{t("renderedPrompt")}</summary><pre>{activation.renderedPrompt}</pre></details>}</div><div className="lorebook-diagnostics"><h2>{t("lorebookDiagnostics")}</h2><p>{diagnostics.length ? t("diagnosticsFound") : t("noLorebookProblems")}</p>{diagnostics.length > 0 && <ul>{diagnostics.map((issue, index) => <li className={issue.level} key={`${issue.entry}-${issue.message}-${index}`}><button onClick={() => setSelectedKey(entryKeys[issue.entry])}>{t("entry")} {issue.entry + 1}: {t(issue.message)}</button></li>)}</ul>}</div></section>
+    <div className="lorebook-workspace"><aside className="lorebook-entry-list"><header><div><h2>{t("entries")}</h2><span>{value.entries.length}</span></div><button className="primary" onClick={addEntry}>{t("addEntry")}</button></header>{value.entries.length === 0 ? <p>{t("noLoreEntries")}</p> : <div>{value.entries.map((entry, index) => <button key={entryKeys[index]} className={`${selectedKey === entryKeys[index] ? "active" : ""} ${entryActive(entry, index) ? "activated" : ""}`} onClick={() => { setSelectedKey(entryKeys[index]); contextFor(`entries.${index}.content`, entry.content || null); }}><strong>{entry.name?.trim() || entry.comment?.trim() || `${t("entry")} ${index + 1}`}</strong><small>{entry.constant ? t("constantEntry") : entry.keys.length ? entry.keys.join(", ") : t("noKeys")}</small><span>{entryActive(entry, index) ? t("activated") : entry.enabled ? t("enabled") : t("disabled")}</span></button>)}</div>}</aside>
       <section className="lorebook-entry-editor">{selected ? <><header><div><h2>{selected.name?.trim() || `${t("entry")} ${selectedIndex + 1}`}</h2><p>{t("entryEditorHint")}</p></div><div><button className="secondary" onClick={() => move(-1)} disabled={selectedIndex === 0}>{t("moveUp")}</button><button className="secondary" onClick={() => move(1)} disabled={selectedIndex === value.entries.length - 1}>{t("moveDown")}</button><button className="danger-outline" onClick={() => setPendingDelete(selectedKey)}>{t("deleteEntry")}</button></div></header>
         <div className="entry-toggle-row"><label><input type="checkbox" checked={selected.enabled} onChange={(event) => updateEntry("enabled", event.target.checked)} />{t("enabled")}</label><label><input type="checkbox" checked={selected.constant} onChange={(event) => updateEntry("constant", event.target.checked)} />{t("constantEntry")}</label><label><input type="checkbox" checked={selected.use_regex} onChange={(event) => updateEntry("use_regex", event.target.checked)} />{t("regexKeys")}</label><label><input type="checkbox" checked={selected.selective ?? false} onChange={(event) => updateEntry("selective", event.target.checked)} />{t("selectiveEntry")}</label></div>
         <div className="entry-form-grid">

@@ -161,5 +161,8 @@ export interface AiMessage { id: string; conversationId: string; role: "user" | 
 export interface AiConversation { id: string; resourceId: string | null; title: string; createdAt: string; updatedAt: string; messages: AiMessage[] }
 export interface SendAiMessageInput { conversationId: string | null; resourceId: string | null; resourceType: "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset" | "world-simulation-engine/world"; resourceLanguage: ResourceLanguage; message: string; draft: CharacterCardV3Data | LorebookData | PresetData | WorldBundleData | null; worldOverview: WorldOverview | null; selection: EditorContext | null }
 export interface PlaygroundMessage { role: "user" | "assistant"; content: string }
-export interface CharacterPlaygroundInput { draft: CharacterCardV3Data; messages: PlaygroundMessage[]; userName: string }
+export interface PlaygroundPresetReference { resourceId: string; versionId: string | null }
+export interface PlaygroundPresetOption { resource: CatalogueResource; versions: ResourceVersionSummary[]; draftAvailable: boolean }
+export interface CharacterPlaygroundInput { linkedLorebooks: LorebookReference[]; draft: CharacterCardV3Data; messages: PlaygroundMessage[]; userName: string; preset: PlaygroundPresetReference | null }
 export interface CharacterPlaygroundResult { reply: string; activatedLore: Array<{ id: string; name: string; position: LorebookPosition }>; renderedPrompt: string; approximateInputTokens: number }
+export interface LorebookActivationResult { activatedLore: CharacterPlaygroundResult["activatedLore"]; renderedPrompt: string; approximateInputTokens: number }

@@ -29,6 +29,9 @@
 .activation-tester > div { display: flex; gap: 8px; margin-top: 9px; font-size: 11px; }
 .activation-tester > div strong { color: #40515b; }
 .activation-tester > div span { color: #687681; }
+.activation-tester details { margin-top: 12px; }
+.activation-tester summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+.activation-tester pre { max-height: 260px; overflow: auto; white-space: pre-wrap; font: 12px/1.5 ui-monospace, monospace; }
 .lorebook-diagnostics ul { max-height: 130px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
 .lorebook-diagnostics li { margin-bottom: 5px; border-left: 3px solid #b88438; }
 .lorebook-diagnostics li.error { border-color: #b64b43; }

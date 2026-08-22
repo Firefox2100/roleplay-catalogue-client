@@ -4,7 +4,7 @@ import { expect, it, vi } from "vitest";
 import { CharacterPlaygroundPage } from "./CharacterPlaygroundPage";
 import { characterData, selectedCharacter } from "./test/fixtures";
 
-const backend = vi.hoisted(() => ({ runCharacterPlayground: vi.fn(), previewCharacterPlayground: vi.fn().mockResolvedValue({ reply: "", activatedLore: [], renderedPrompt: "Live prompt", approximateInputTokens: 12 }) }));
+const backend = vi.hoisted(() => ({ runCharacterPlayground: vi.fn(), previewCharacterPlayground: vi.fn().mockResolvedValue({ reply: "", activatedLore: [], renderedPrompt: "Live prompt", approximateInputTokens: 12 }), listPlaygroundPresets: vi.fn().mockResolvedValue([]) }));
 vi.mock("./backend", () => backend);
 const t = (key: string) => key;
 
@@ -47,4 +47,11 @@ it("immediately assembles the complete prompt when the message field loses focus
   expect(backend.previewCharacterPlayground).toHaveBeenCalledWith(expect.objectContaining({
     messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: "Activate the harbour lore" })]),
   }));
+});
+
+it("passes linked lorebook references to prompt assembly", async () => {
+  render(<CharacterPlaygroundPage selected={selectedCharacter(characterData(), { linkedLorebooks: [{ resourceId: "lore-1", versionId: "release-1" }] })} providerConfigured t={t as never} />);
+  await waitFor(() => expect(backend.previewCharacterPlayground).toHaveBeenCalledWith(expect.objectContaining({
+    linkedLorebooks: [{ resourceId: "lore-1", versionId: "release-1" }],
+  })));
 });

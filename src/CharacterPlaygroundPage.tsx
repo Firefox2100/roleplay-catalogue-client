@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { previewCharacterPlayground, runCharacterPlayground } from "./backend";
+import { listPlaygroundPresets, previewCharacterPlayground, runCharacterPlayground } from "./backend";
 import type { MessageKey } from "./i18n";
-import type { CharacterPlaygroundResult, PlaygroundMessage, SelectedCharacter } from "./types";
+import type { CharacterPlaygroundResult, PlaygroundMessage, PlaygroundPresetOption, PlaygroundPresetReference, SelectedCharacter } from "./types";
 import "./CharacterPlaygroundPage.css";
 
 const initialMessages = (selected: SelectedCharacter): PlaygroundMessage[] => {
@@ -16,6 +16,8 @@ export function CharacterPlaygroundPage({ selected, providerConfigured, t }: { s
   const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
   const [error, setError] = useState("");
   const [result, setResult] = useState<CharacterPlaygroundResult | null>(null);
+  const [preset, setPreset] = useState<PlaygroundPresetReference | null>(null);
+  const [presetOptions, setPresetOptions] = useState<PlaygroundPresetOption[]>([]);
   const previewSequence = useRef(0);
   const previewTimer = useRef<number | null>(null);
   const preview = useCallback((immediate = false) => {
@@ -25,12 +27,13 @@ export function CharacterPlaygroundPage({ selected, providerConfigured, t }: { s
     const run = () => {
       previewTimer.current = null;
       const previewMessages = message.trim() ? [...messages, { role: "user", content: message.trim() } satisfies PlaygroundMessage] : messages;
-      void previewCharacterPlayground({ draft: selected.draft!.data, messages: previewMessages, userName: userName.trim() || "User" }).then((next) => { if (previewSequence.current === sequence) setResult(next); }).catch(() => undefined);
+      void previewCharacterPlayground({ linkedLorebooks: selected.resource.linkedLorebooks, draft: selected.draft!.data, messages: previewMessages, userName: userName.trim() || "User", preset }).then((next) => { if (previewSequence.current === sequence) { setResult(next); setError(""); } }).catch((reason) => { if (previewSequence.current === sequence) setError(String(reason)); });
     };
     if (immediate) run();
     else previewTimer.current = window.setTimeout(run, 300);
-  }, [message, messages, selected.draft, userName]);
-  useEffect(() => { setMessages(initialMessages(selected)); setResult(null); setError(""); setStatus("idle"); }, [selected.resource.id, selected.draft?.revision]);
+  }, [message, messages, preset, selected.draft, selected.resource.id, selected.resource.linkedLorebooks, selected.resource.storageMode, userName]);
+  useEffect(() => { setMessages(initialMessages(selected)); setResult(null); setError(""); setStatus("idle"); setPreset(null); }, [selected.resource.id, selected.draft?.revision]);
+  useEffect(() => { if (selected.resource.storageMode !== "local") void listPlaygroundPresets().then(setPresetOptions).catch(() => setPresetOptions([])); }, [selected.resource.storageMode]);
   useEffect(() => {
     preview();
     return () => { if (previewTimer.current !== null) window.clearTimeout(previewTimer.current); };
@@ -43,14 +46,14 @@ export function CharacterPlaygroundPage({ selected, providerConfigured, t }: { s
     const next = [...messages, { role: "user", content } satisfies PlaygroundMessage];
     setMessages(next); setMessage(""); setError(""); setStatus("sending");
     try {
-      const response = await runCharacterPlayground({ draft: selected.draft.data, messages: next, userName: userName.trim() || "User" });
+      const response = await runCharacterPlayground({ linkedLorebooks: selected.resource.linkedLorebooks, draft: selected.draft.data, messages: next, userName: userName.trim() || "User", preset });
       setResult(response); setMessages((current) => [...current, { role: "assistant", content: response.reply }]); setStatus("idle");
     } catch (reason) { setError(String(reason)); setStatus("error"); }
   };
   if (!selected.draft) return <section className="playground-page"><h1>{t("playgroundTitle")}</h1><p>{t("noDraftOverview")}</p></section>;
   return <section className="playground-page">
     <header><div><p>{selected.resource.metadata.name}</p><h1>{t("playgroundTitle")}</h1><span>{t("playgroundIntro")}</span></div><button className="secondary" onClick={reset}>{t("resetTrial")}</button></header>
-    <div className="playground-identity"><label>{t("trialUserName")}<input value={userName} maxLength={80} onChange={(event) => setUserName(event.target.value)} /></label></div>
+    <div className="playground-identity"><label>{t("trialPreset")}<select value={preset ? JSON.stringify(preset) : ""} onChange={(event) => setPreset(event.target.value ? JSON.parse(event.target.value) as PlaygroundPresetReference : null)}><option value="">{t("basicTrialPrompt")}</option>{presetOptions.flatMap((option) => [option.draftAvailable ? <option key={`${option.resource.id}-draft`} value={JSON.stringify({ resourceId: option.resource.id, versionId: null })}>{option.resource.metadata.name} — {t("draftLabel")}</option> : null, ...option.versions.map((version) => <option key={version.id} value={JSON.stringify({ resourceId: option.resource.id, versionId: version.id })}>{option.resource.metadata.name} — {version.version}</option>)] )}</select></label><label>{t("trialUserName")}<input value={userName} maxLength={80} onChange={(event) => setUserName(event.target.value)} /></label></div>
     <div className="playground-layout"><section className="playground-chat" aria-label={t("trialConversation")}>
       <div className="playground-messages">{messages.length ? messages.map((item, index) => <article key={index} className={item.role}><strong>{item.role === "assistant" ? selected.draft!.data.name || t("character") : userName || t("user")}</strong><p>{item.content}</p></article>) : <div className="playground-empty">{t("trialEmpty")}</div>}{status === "sending" && <div className="playground-pending" role="status">{t("generatingTrial")}</div>}</div>
       {error && <p className="release-blocker" role="alert">{error}</p>}
