@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { createLocalResource, createResource, fetchCharacterCover, listLocalResources, listOwnedResources, selectLocalResource, selectResource } from "./backend";
 import type { MessageKey } from "./i18n";
+import { Icon } from "./Icon";
 import type { CatalogueResource, CreateResourceInput, Locale, SelectedResource } from "./types";
 import "./ResourcePicker.css";
 
@@ -10,6 +11,7 @@ const typeLabel = (type: SupportedResourceType): MessageKey => type === "world-s
 const createLabel = (type: SupportedResourceType): MessageKey => type === "world-simulation-engine/world" ? "createWorld" : type === "sillytavern/lorebook" ? "createLorebook" : type === "sillytavern/preset" ? "createPreset" : "create";
 const newLabel = (type: SupportedResourceType): MessageKey => type === "world-simulation-engine/world" ? "newWorld" : type === "sillytavern/lorebook" ? "newLorebook" : type === "sillytavern/preset" ? "newPreset" : "newCharacter";
 const createActionLabel = (type: SupportedResourceType): MessageKey => type === "world-simulation-engine/world" ? "createWorldAction" : type === "sillytavern/lorebook" ? "createLorebookAction" : type === "sillytavern/preset" ? "createPresetAction" : "createAction";
+const readableError = (reason: unknown, locale: Locale) => String(reason).includes("reading 'invoke'") ? (locale === "zh-CN" ? "请在 RolePlay Catalogue 桌面应用中打开此页面。" : "Open this screen in the RolePlay Catalogue desktop app.") : String(reason);
 
 function ResourceCover({ resource }: { resource: CatalogueResource }) {
   const [source, setSource] = useState<string | null>(null);
@@ -24,8 +26,8 @@ function ResourceCover({ resource }: { resource: CatalogueResource }) {
   }, [resource.id, resource.coverImageResourceId]);
 
   if (source) return <img className="resource-cover" src={source} alt="" />;
-  const initial = resource.metadata.name.trim().charAt(0).toLocaleUpperCase() || "◇";
-  return <div className="resource-cover resource-cover--placeholder" aria-hidden="true"><span>{initial}</span></div>;
+  const initial = resource.metadata.name.trim().charAt(0).toLocaleUpperCase();
+  return <div className="resource-cover resource-cover--placeholder" aria-hidden="true"><span>{initial || <Icon name="assets" size={36} />}</span></div>;
 }
 
 function ResourceCard({ resource, selected, busy, choose, t }: { resource: CatalogueResource; selected: boolean; busy: boolean; choose: (id: string) => Promise<void>; t: (key: MessageKey) => string }) {
@@ -44,7 +46,7 @@ export function ResourcePicker({ configured, selected, locale, onSelected, onOpe
   const [resourceType, setResourceType] = useState<SupportedResourceType>("sillytavern/character");
   const [mode, setMode] = useState<"local" | "remote">("local");
   const [resources, setResources] = useState<CatalogueResource[]>([]), [loading, setLoading] = useState(false), [error, setError] = useState(""), [creating, setCreating] = useState(false), [form, setForm] = useState(() => emptyInput(locale, resourceType)), [busyId, setBusyId] = useState("");
-  const load = useCallback(async () => { if (mode === "remote" && !configured) { setResources([]); return; } setLoading(true); setError(""); try { setResources((await (mode === "local" ? listLocalResources(resourceType) : listOwnedResources(resourceType))).items); } catch (reason) { setError(String(reason)); } finally { setLoading(false); } }, [configured, mode, resourceType]);
+  const load = useCallback(async () => { if (mode === "remote" && !configured) { setResources([]); return; } setLoading(true); setError(""); try { setResources((await (mode === "local" ? listLocalResources(resourceType) : listOwnedResources(resourceType))).items); } catch (reason) { setError(readableError(reason, locale)); } finally { setLoading(false); } }, [configured, locale, mode, resourceType]);
   useEffect(() => { void load(); }, [load]);
   const choose = async (id: string) => { setBusyId(id); setError(""); try { onSelected(await (mode === "local" ? selectLocalResource(id, resourceType) : selectResource(id, resourceType))); } catch (reason) { setError(String(reason)); } finally { setBusyId(""); } };
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusyId("create"); setError(""); try { const result = await (mode === "local" ? createLocalResource(form) : createResource(form)); onSelected(result); setResources((items) => [result.resource, ...items]); setCreating(false); setForm(emptyInput(locale, resourceType)); } catch (reason) { setError(String(reason)); } finally { setBusyId(""); } };

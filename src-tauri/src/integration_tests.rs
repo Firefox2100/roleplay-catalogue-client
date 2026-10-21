@@ -177,7 +177,10 @@ fn playground_provider_request_is_plain_text_and_injects_late_system_content_aft
 
 #[test]
 fn catalogue_adapter_sends_bearer_auth_and_decodes_service_json() {
-    let (base_url, request) = mock_server(200, serde_json::json!({"id": "catalogue-user"}));
+    let (base_url, request) = mock_server(
+        200,
+        serde_json::json!({"id": "catalogue-user", "username": "creator"}),
+    );
     let mut config = AppConfig::default();
     config.catalogue.base_url = base_url;
     config.catalogue.api_key = "catalogue-secret".into();
@@ -191,6 +194,7 @@ fn catalogue_adapter_sends_bearer_auth_and_decodes_service_json() {
     .unwrap();
     let user: CurrentUser = decode_catalogue_json(response).unwrap();
     assert_eq!(user.id, "catalogue-user");
+    assert_eq!(user.username, "creator");
     let request = request.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(request.starts_with("GET /auth/me HTTP/1.1"));
     assert!(request

@@ -1,0 +1,27 @@
+.collaboration-panel { max-width: 1080px; margin: 22px auto 88px; padding: 22px; border: 1px solid #dce2e6; border-radius: 12px; background: #fff; }
+.collaboration-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.collaboration-panel h2 { margin: 0 0 5px; font-size: 18px; }
+.collaboration-panel header p { max-width: 70ch; margin: 0; color: #687681; line-height: 1.5; }
+.collaboration-panel header > span { min-width: 32px; padding: 5px 9px; border-radius: 999px; background: #eef2f4; color: #52616b; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.collaboration-panel ul { margin: 18px 0; padding: 0; list-style: none; border-top: 1px solid #e5e9ec; }
+.collaboration-panel li { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e5e9ec; }
+.collaboration-panel li > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.collaboration-panel li strong { overflow: hidden; text-overflow: ellipsis; }
+.collaboration-panel li small { color: #687681; }
+.collaboration-panel li button { display: inline-flex; align-items: center; gap: 7px; }
+.collaboration-empty { margin: 18px 0; padding: 16px; border-radius: 8px; background: #f5f7f8; color: #687681; }
+.collaboration-add { margin-top: 18px; }
+.collaboration-add label { display: block; margin-bottom: 7px; color: #3c4a55; font-size: 13px; font-weight: 650; }
+.collaboration-add > div { max-width: 520px; display: flex; gap: 8px; }
+.collaboration-add input { min-width: 0; min-height: 44px; flex: 1; padding: 8px 10px; border: 1px solid #cbd5db; border-radius: 7px; background: #fff; color: #1f303b; outline: none; }
+.collaboration-add input:focus { border-color: #287590; box-shadow: 0 0 0 3px #dceff5; }
+.collaboration-error { margin: 12px 0 0; color: #8a302a; font-size: 13px; }
+html[data-theme="dark"] .collaboration-panel { border-color: #34434c; background: #192229; color: #dce4e8; }
+html[data-theme="dark"] .collaboration-panel header p, html[data-theme="dark"] .collaboration-panel li small { color: #9babb3; }
+html[data-theme="dark"] .collaboration-panel header > span, html[data-theme="dark"] .collaboration-empty { background: #26343c; color: #bac6cc; }
+html[data-theme="dark"] .collaboration-panel ul, html[data-theme="dark"] .collaboration-panel li { border-color: #34434c; }
+html[data-theme="dark"] .collaboration-add label { color: #cbd5da; }
+html[data-theme="dark"] .collaboration-add input { border-color: #465761; background: #202b32; color: #dce4e8; }
+html[data-theme="dark"] .collaboration-error { color: #f0b0aa; }
+@media (max-width: 720px) { .collaboration-panel { margin: 18px 0 76px; padding: 18px 16px; } .collaboration-panel li { padding: 10px 0; align-items: flex-start; flex-direction: column; } .collaboration-add > div { flex-direction: column; } }
+.coauthor-view .release-panel .release-actions .primary { display: none; }

@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CharacterPlaygroundInput, CharacterPlaygroundResult, CoverImage, CreateResourceInput, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookActivationResult, LorebookData, LorebookDraft, LorebookReference, PlaygroundPresetOption, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldBundleData, WorldDraft, WorldOverview } from "./types";
+import type { AiConversation, AppConfig, BootstrapData, CatalogueResource, CharacterCardV3Data, CharacterDraft, CharacterPlaygroundInput, CharacterPlaygroundResult, CoverImage, CreateResourceInput, CurrentUser, DraftSaveOutcome, ExportedDraft, JsonValue, LinkableLorebook, LorebookActivationResult, LorebookData, LorebookDraft, LorebookReference, PlaygroundPresetOption, PresetData, PresetDraft, ResourceList, ResourceMetadata, ResourceSaveOutcome, ResourceVersionSummary, SelectedResource, SendAiMessageInput, WorldBundleData, WorldDraft, WorldOverview } from "./types";
 export const loadBootstrap = () => invoke<BootstrapData>("load_bootstrap");
 export const saveConfiguration = (config: AppConfig) => invoke<AppConfig>("save_configuration", { config });
+export const getCurrentUser = () => invoke<CurrentUser>("get_current_user");
+export const addResourceCoAuthor = (resourceId: string, username: string) => invoke<CatalogueResource>("add_resource_co_author", { resourceId, username });
+export const removeResourceCoAuthor = (resourceId: string, coAuthorId: string) => invoke<CatalogueResource>("remove_resource_co_author", { resourceId, coAuthorId });
 export const listOwnedResources = (resourceType: CreateResourceInput["resourceType"]) => invoke<ResourceList>("list_owned_resources", { resourceType });
 export const fetchCharacterCover = (resourceId: string) => invoke<CoverImage | null>("fetch_character_cover", { resourceId });
 export const fetchImageContent = (imageResourceId: string) => invoke<CoverImage>("fetch_image_content", { imageResourceId });

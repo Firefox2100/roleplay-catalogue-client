@@ -88,6 +88,12 @@ struct CatalogueResource {
     #[serde(default)]
     author_username: String,
     #[serde(default)]
+    co_author_usernames: Vec<String>,
+    #[serde(default)]
+    view_count: u64,
+    #[serde(default)]
+    download_count: u64,
+    #[serde(default)]
     revision: u64,
     #[serde(default)]
     storage_mode: Option<String>,
@@ -531,9 +537,57 @@ struct CreateResourceInput {
     tags: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CurrentUser {
     id: String,
+    #[serde(default)]
+    username: String,
+}
+
+#[tauri::command]
+async fn get_current_user(app: AppHandle) -> Result<CurrentUser, String> {
+    catalogue_json(&app, reqwest::Method::GET, "/auth/me", None).await
+}
+
+#[tauri::command]
+async fn add_resource_co_author(
+    app: AppHandle,
+    resource_id: String,
+    username: String,
+) -> Result<CatalogueResource, String> {
+    let username = username.trim();
+    if username.is_empty() {
+        return Err("Co-author username is required".into());
+    }
+    catalogue_json::<CatalogueResource>(
+        &app,
+        reqwest::Method::POST,
+        &format!("/resources/{resource_id}/co-authors"),
+        Some(serde_json::json!({ "username": username })),
+    )
+    .await?;
+    catalogue_json(
+        &app,
+        reqwest::Method::GET,
+        &format!("/resources/{resource_id}"),
+        None,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_resource_co_author(
+    app: AppHandle,
+    resource_id: String,
+    co_author_id: String,
+) -> Result<CatalogueResource, String> {
+    catalogue_json(
+        &app,
+        reqwest::Method::DELETE,
+        &format!("/resources/{resource_id}/co-authors/{co_author_id}"),
+        None,
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -2791,17 +2845,28 @@ async fn list_owned_resources(
     }
     let user: CurrentUser = catalogue_json(&app, reqwest::Method::GET, "/auth/me", None).await?;
     let encoded_type = resource_type.replace('/', "%2F");
-    let mut resources: ResourceList = catalogue_json(
-        &app,
-        reqwest::Method::GET,
-        &format!("/resources?resourceType={encoded_type}&limit=100"),
-        None,
-    )
-    .await?;
-    resources
-        .items
-        .retain(|resource| resource.author_id == user.id);
-    Ok(resources)
+    let mut items = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: ResourceList = catalogue_json(
+            &app,
+            reqwest::Method::GET,
+            &format!("/resources?resourceType={encoded_type}&limit=100&offset={offset}"),
+            None,
+        )
+        .await?;
+        items.extend(page.items.into_iter().filter(|resource| {
+            resource.author_id == user.id || resource.co_author_ids.contains(&user.id)
+        }));
+        match page.next_offset {
+            Some(next) if next > offset => offset = next,
+            _ => break,
+        }
+    }
+    Ok(ResourceList {
+        items,
+        next_offset: None,
+    })
 }
 
 #[tauri::command]
@@ -2963,6 +3028,9 @@ fn create_local_resource(
         created_at: timestamp.clone(),
         updated_at: timestamp.clone(),
         author_username: "Local workspace".into(),
+        co_author_usernames: vec![],
+        view_count: 0,
+        download_count: 0,
         revision: 0,
         storage_mode: Some("local".into()),
         local_path: Some(dir.to_string_lossy().into_owned()),
@@ -3470,7 +3538,10 @@ async fn create_resource(
     }
     if !matches!(
         input.resource_type.as_str(),
-        "sillytavern/character" | "sillytavern/lorebook" | "sillytavern/preset"
+        "sillytavern/character"
+            | "sillytavern/lorebook"
+            | "sillytavern/preset"
+            | "world-simulation-engine/world"
     ) {
         return Err("Unsupported resource type".into());
     }
@@ -3719,6 +3790,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_bootstrap,
             save_configuration,
+            get_current_user,
+            add_resource_co_author,
+            remove_resource_co_author,
             list_owned_resources,
             list_local_resources,
             list_owned_images,
@@ -4008,16 +4082,22 @@ mod unit_tests {
             "resourceType": "sillytavern/character",
             "authorId": "owner",
             "coAuthorIds": ["editor"],
+            "coAuthorUsernames": ["editor-name"],
             "metadata": { "name": "Card", "description": "", "language": "en-uk", "visibility": "private", "tags": [] },
             "draftDataId": "draft",
             "coverImageResourceId": "cover",
             "linkedLorebooks": [{ "resourceId": "book", "versionId": "release" }],
             "createdAt": "2026-01-01T00:00:00Z",
             "updatedAt": "2026-01-01T00:00:00Z",
-            "revision": 4
+            "revision": 4,
+            "viewCount": 12,
+            "downloadCount": 3
         }))
         .unwrap();
         assert_eq!(resource.co_author_ids, ["editor"]);
+        assert_eq!(resource.co_author_usernames, ["editor-name"]);
+        assert_eq!(resource.view_count, 12);
+        assert_eq!(resource.download_count, 3);
         assert_eq!(resource.linked_lorebooks[0].resource_id, "book");
         assert_eq!(
             resource.linked_lorebooks[0].version_id.as_deref(),

@@ -21,6 +21,26 @@
 .playground-settings-card p { margin: 12px 0 6px; color: var(--muted, #687681); line-height: 1.5; }
 .playground-settings-card small { display: block; color: var(--muted, #74818a); line-height: 1.5; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Shared interaction and entry-shell refinements. */
+:root { --focus-border: #287590; --focus-ring: #dceff5; --selection: #c9e7f1; --selection-text: #102f3a; }
+html { scrollbar-color: #aebbc3 transparent; scrollbar-width: thin; }
+::selection { background: var(--selection); color: var(--selection-text); }
+input, textarea { caret-color: #176b87; }
+button:focus-visible, [tabindex]:focus-visible, a:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+button:disabled { cursor: not-allowed; }
+.ui-icon { display: block; flex: 0 0 auto; }
+.icon-button, .drawer-launch, .drawer-top button { min-width: 44px; min-height: 44px; display: inline-grid; place-items: center; }
+.nav-list > button { min-height: 44px; }
+.primary, .secondary { min-height: 44px; }
+.nav-list button > .ui-icon { width: 18px; height: 18px; }
+.resource-gate { background: #f5f7f8; }
+.resource-gate-header { min-height: 64px; padding: 10px clamp(20px, 4vw, 48px); border-bottom: 1px solid #dce2e6; background: rgba(255,255,255,.94); display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.resource-gate-header > div { min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.resource-gate-header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.resource-gate-header span { color: #74818a; font-size: 12px; font-variant-numeric: tabular-nums; }
+.resource-gate-page { min-height: calc(100vh - 64px); padding-top: clamp(32px, 6vw, 64px); }
+
 @media (min-width: 721px) {
   .left-open .page { margin-left: 264px; }
   .right-open .page { margin-right: 370px; }
@@ -35,4 +55,6 @@
   .resource-gate-page { padding: 28px 16px 32px; }
   .drawer-launch { z-index: 17; }
   .left-open .drawer-launch--left, .right-open .drawer-launch--right { display: none; }
+  .resource-gate-header { min-height: 58px; padding: 8px 16px; }
+  .resource-gate-page { min-height: calc(100vh - 58px); padding-top: 28px; }
 }

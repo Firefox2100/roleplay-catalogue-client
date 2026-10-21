@@ -15,5 +15,12 @@
 .resource-card > button { border-radius: 0 0 9px 9px; }
 .resource-settings-action { margin-top: 18px; }
 .resource-type-filter { display: inline-flex; gap: 4px; margin: 0 0 18px; padding: 4px; border: 1px solid #d5dde2; border-radius: 9px; background: #f2f5f6; }
-.resource-type-filter button { min-height: 34px; padding: 6px 14px; border: 0; border-radius: 6px; background: transparent; color: #52616b; cursor: pointer; }
+.resource-type-filter button { min-height: 44px; padding: 8px 14px; border: 0; border-radius: 6px; background: transparent; color: #52616b; cursor: pointer; }
 .resource-type-filter button.active { background: #fff; color: #176b87; box-shadow: 0 1px 4px rgba(26, 45, 56, .12); }
+
+@media (max-width: 720px) {
+  .resource-type-filter { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .resource-type-filter button { min-width: 0; min-height: 44px; padding-inline: 10px; }
+  .resource-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .resource-actions .primary { grid-column: 1 / -1; }
+}

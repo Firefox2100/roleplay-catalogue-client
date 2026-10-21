@@ -8,8 +8,10 @@ export interface BootstrapData { version: string; config: AppConfig }
 export type ResourceVisibility = "private" | "authenticated" | "public";
 export interface ResourceMetadata { name: string; description: string; language: ResourceLanguage; visibility: ResourceVisibility; tags: string[] }
 export interface LorebookReference { resourceId: string; versionId: string | null }
-export interface CatalogueResource { id: string; resourceType: string; authorId: string; coAuthorIds: string[]; metadata: ResourceMetadata; draftDataId: string | null; coverImageResourceId: string | null; linkedLorebooks: LorebookReference[]; createdAt: string; updatedAt: string; authorUsername: string; revision: number; storageMode?: "local" | "remote"; localPath?: string | null }
+export interface ResourceVersionReference { resourceId: string; versionId: string; instance: string | null }
+export interface CatalogueResource { id: string; resourceType: string; authorId: string; coAuthorIds: string[]; coAuthorUsernames?: string[]; metadata: ResourceMetadata; draftDataId: string | null; coverImageResourceId: string | null; linkedLorebooks: LorebookReference[]; forkedFrom?: ResourceVersionReference | null; createdAt: string; updatedAt: string; authorUsername: string; viewCount?: number; downloadCount?: number; revision: number; storageMode?: "local" | "remote"; localPath?: string | null }
 export interface ResourceList { items: CatalogueResource[]; nextOffset: number | null }
+export interface CurrentUser { id: string; username: string }
 export interface CoverImage { mediaType: string; data: string }
 export interface ResourceVersionSummary { id: string; resourceId: string; version: string; versionNumber: number; visibility: ResourceVisibility; coverImageResourceId: string | null; publishedAt: string }
 export interface ExportedDraft { fileName: string; mediaType: string; data: string }

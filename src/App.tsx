@@ -3,7 +3,8 @@ import "./App.css";
 import "./AppLayout.css";
 import { AssetsPage } from "./AssetsPage";
 import { AssistantDrawer } from "./AssistantDrawer";
-import { importResourceFile, transportLocalResource, saveCharacterDraft, saveLocalDraft, saveLorebookDraft, savePresetDraft, saveWorldDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
+import { getCurrentUser, importResourceFile, transportLocalResource, saveCharacterDraft, saveLocalDraft, saveLorebookDraft, savePresetDraft, saveWorldDraft, loadBootstrap, loadWorldOverview, saveConfiguration, saveWorldOverview } from "./backend";
+import { CollaborationPanel } from "./CollaborationPanel";
 import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
 import { CharacterFoundationPage } from "./CharacterFoundationPage";
 import { CharacterPlaygroundPage } from "./CharacterPlaygroundPage";
@@ -16,13 +17,14 @@ import { LorebookOverviewPage } from "./LorebookOverviewPage";
 import { PresetEditorPage } from "./PresetEditorPage";
 import { PresetOverviewPage } from "./PresetOverviewPage";
 import { LinkedLorebooksPage } from "./LinkedLorebooksPage";
+import { Icon } from "./Icon";
 import { translate, type MessageKey } from "./i18n";
 import { OverviewPage } from "./OverviewPage";
 import { ResourcePicker } from "./ResourcePicker";
 import { RuntimeInstructionsPage } from "./RuntimeInstructionsPage";
 import { ScenarioOpeningsPage } from "./ScenarioOpeningsPage";
 import { SecretInput } from "./SecretInput";
-import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, CharacterDraft, EditorContext, LorebookData, LorebookDraft, PresetData, PresetDraft, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedPreset, SelectedResource, SelectedWorld, WorldBundleData, WorldDraft, WorldOverview } from "./types";
+import type { AiProposal, AppConfig, AppearanceMode, BootstrapData, CharacterCardV3Data, CharacterDraft, CurrentUser, EditorContext, LorebookData, LorebookDraft, PresetData, PresetDraft, ProviderKind, SelectedCharacter, SelectedLorebook, SelectedPreset, SelectedResource, SelectedWorld, WorldBundleData, WorldDraft, WorldOverview } from "./types";
 import { WorldOverviewPage } from "./WorldOverviewPage";
 import { WORLD_CONFIGS, WORLD_SECTIONS, worldConfigLabel, worldSectionLabel, WorldBundlePage, type WorldPageKey } from "./WorldBundlePage";
 import { threeWayMerge, type MergeConflicts } from "./threeWayMerge";
@@ -58,6 +60,7 @@ function App() {
   const [draft, setDraft] = useState<AppConfig>(fallback.config);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [selected, setSelected] = useState<SelectedResource | null>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [worldOverview, setWorldOverview] = useState<WorldOverview | null>(null);
   const [worldStatus, setWorldStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [cardStatus, setCardStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -75,6 +78,12 @@ function App() {
 
   useEffect(() => { loadBootstrap().then((value) => { setData(value); setDraft(value.config); }).catch(() => setStatus("error")); }, []);
   useEffect(() => { document.documentElement.lang = draft.locale; }, [draft.locale]);
+  useEffect(() => {
+    if (!selected || selected.resource.storageMode === "local") { setCurrentUser(null); return; }
+    let active = true;
+    void getCurrentUser().then((user) => { if (active) setCurrentUser(user); }).catch(() => { if (active) setCurrentUser(null); });
+    return () => { active = false; };
+  }, [selected?.resource.id, selected?.resource.storageMode]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => { document.documentElement.dataset.theme = draft.appearance === "system" ? (media.matches ? "dark" : "light") : draft.appearance; };
@@ -289,13 +298,8 @@ function App() {
   const shellClass = `app-shell ${leftOpen ? "left-open" : "left-closed"} ${rightOpen ? "right-open" : "right-closed"}`;
   const consumeAssistantPrompt = useCallback(() => setAssistantPrompt(null), []);
 
-  if (!selected) return <div className={`app-shell resource-gate ${leftOpen ? "left-open" : "left-closed"} right-closed`}>
-    {!leftOpen && <button className="drawer-launch drawer-launch--left" onClick={() => setLeftOpen(true)} aria-label={t("expandNav")}>☰</button>}
-    {mobile && leftOpen && <button className="scrim" onClick={() => setLeftOpen(false)} aria-label={t("closeNav")} />}
-    <aside className={`drawer ${leftOpen ? "drawer--open" : ""}`}>
-      <div className="nav-list" />
-      <footer className="drawer-footer"><div><strong>{t("appName")}</strong><small>v{data.version}</small></div><button className="icon-button" onClick={() => setLeftOpen(false)} aria-label={t("collapseNav")} title={t("collapseNav")}>‹</button><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => { setPage("settings"); if (mobile) setLeftOpen(false); }} aria-label={t("openSettings")} title={t("settings")}>⚙</button></footer>
-    </aside>
+  if (!selected) return <div className="app-shell resource-gate">
+    <header className="resource-gate-header"><div><strong>{t("appName")}</strong><span>v{data.version}</span></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => setPage("settings")} aria-label={t("openSettings")} title={t("settings")}><Icon name="settings" /></button></header>
     <main className="page resource-gate-page">{page === "settings" ? <><button className="secondary resource-gate-back" onClick={() => setPage("resources")}>{t("backToResources")}</button><SettingsPage draft={draft} status={status} llm={llm} provider={provider} setDraft={setDraft} save={save} t={t} /></> : <ResourcePicker configured={Boolean(data.config.catalogue.baseUrl && data.config.catalogue.apiKey)} selected={null} locale={draft.locale} onSelected={selectResource} onOpenSettings={() => setPage("settings")} t={t} />}</main>
   </div>;
 
@@ -304,42 +308,43 @@ function App() {
   const selectedWorld = selected.resource.resourceType === "world-simulation-engine/world" ? selected as SelectedWorld : null;
   const selectedCharacter = standaloneLorebook || standalonePreset || selectedWorld ? null : selected as SelectedCharacter;
   const effectiveShellClass = shellClass;
+  const coAuthorView = selected.resource.storageMode !== "local" && Boolean(currentUser) && currentUser?.id !== selected.resource.authorId;
 
   return <div className={effectiveShellClass}>
-    {!leftOpen && <button className="drawer-launch drawer-launch--left" onClick={() => { setLeftOpen(true); if (mobile) setRightOpen(false); }} aria-label={t("expandNav")}>☰</button>}
-    {!rightOpen && <button className="drawer-launch drawer-launch--right" onClick={() => { setRightOpen(true); if (mobile) setLeftOpen(false); }} aria-label={t("expandAssistant")}>✦</button>}
+    {!leftOpen && <button className="drawer-launch drawer-launch--left" onClick={() => { setLeftOpen(true); if (mobile) setRightOpen(false); }} aria-label={t("expandNav")}><Icon name="menu" /></button>}
+    {!rightOpen && <button className="drawer-launch drawer-launch--right" onClick={() => { setRightOpen(true); if (mobile) setLeftOpen(false); }} aria-label={t("expandAssistant")}><Icon name="assistant" /></button>}
     {mobile && (leftOpen || rightOpen) && <button className="scrim" onClick={closeOverlay} aria-label={leftOpen ? t("closeNav") : t("closeAssistant")} />}
 
     <aside className={`drawer ${leftOpen ? "drawer--open" : ""}`}>
       <nav className="nav-list">
-        <div className="drawer-top"><strong>{selected?.resource.metadata.name ?? t("resources")}</strong><button onClick={() => setLeftOpen(false)} aria-label={t("collapseNav")}>‹</button></div>
-        <button onClick={() => void importSelected()} disabled={cardDirty || importStatus === "importing"} title={cardDirty ? t("saveBeforeImport") : t("importFile")}><span>⇧</span>{importStatus === "importing" ? t("importingFile") : t("importFile")}</button>
-        {selected.resource.storageMode === "local" && <button onClick={() => { setTransportError(""); setTransportStatus("idle"); setTransportOpen(true); }} disabled={cardDirty || transportStatus === "moving"} title={cardDirty ? t("saveBeforeTransport") : t("transportToCatalogue")}><span>⇥</span>{t("transportToCatalogue")}</button>}
+        <div className="drawer-top"><strong>{selected?.resource.metadata.name ?? t("resources")}</strong><button onClick={() => setLeftOpen(false)} aria-label={t("collapseNav")}><Icon name="back" /></button></div>
+        <button onClick={() => void importSelected()} disabled={cardDirty || importStatus === "importing"} title={cardDirty ? t("saveBeforeImport") : t("importFile")}><Icon name="import" />{importStatus === "importing" ? t("importingFile") : t("importFile")}</button>
+        {selected.resource.storageMode === "local" && <button onClick={() => { setTransportError(""); setTransportStatus("idle"); setTransportOpen(true); }} disabled={cardDirty || transportStatus === "moving"} title={cardDirty ? t("saveBeforeTransport") : t("transportToCatalogue")}><Icon name="sync" />{t("transportToCatalogue")}</button>}
         {importStatus === "error" && <p className="nav-status-error" role="alert">{t("importFailed")} {importError}</p>}
-        {selectedCharacter && <><button className={page === "overview" ? "active" : ""} onClick={() => go("overview")}><span>◫</span>{t("overview")}</button>
-        <button className={page === "playground" ? "active" : ""} onClick={() => go("playground")}><span>▷</span>{t("playgroundTitle")}</button>
-        <button className={page === "world" ? "active" : ""} onClick={() => go("world")}><span>◎</span>{t("worldOverview")}</button>
-        <button className={page === "foundation" ? "active" : ""} onClick={() => go("foundation")}><span>◇</span>{t("foundation")}</button>
-        <button className={page === "scenes" ? "active" : ""} onClick={() => go("scenes")}><span>◈</span>{t("scenes")}</button>
-        <button className={page === "dialogue" ? "active" : ""} onClick={() => go("dialogue")}><span>≋</span>{t("dialogueVoice")}</button>
-        <button className={page === "runtime" ? "active" : ""} onClick={() => go("runtime")}><span>⌁</span>{t("runtimeInstructions")}</button>
-        <button className={page === "metadata" ? "active" : ""} onClick={() => go("metadata")}><span>ⓘ</span>{t("metadata")}</button>
-        <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("embeddedLorebook")}</button>
-        {selectedCharacter.resource.storageMode !== "local" && <button className={page === "linked-lorebooks" ? "active" : ""} onClick={() => go("linked-lorebooks")}><span>⛓</span>{t("linkedLorebooks")}</button>}
-        <button className={page === "extensions" ? "active" : ""} onClick={() => go("extensions")}><span>⌘</span>{t("extensionsAndScripts")}</button>
-        <button className={page === "mvu" ? "active" : ""} onClick={() => go("mvu")}><span>↻</span>{t("mvuComposer")}</button>
-        <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><span>▧</span>{t("assetsAndCover")}</button></>}
-        {standaloneLorebook && <button className={page === "lorebook-overview" ? "active" : ""} onClick={() => go("lorebook-overview")}><span>◫</span>{t("overview")}</button>}
-        {standaloneLorebook && <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><span>▤</span>{t("lorebookEditor")}</button>}
-        {standaloneLorebook && <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><span>▧</span>{t("assetsAndCover")}</button>}
-        {standalonePreset && <button className={page === "preset-overview" ? "active" : ""} onClick={() => go("preset-overview")}><span>◫</span>{t("overview")}</button>}
-        {standalonePreset && <button className={page === "preset" ? "active" : ""} onClick={() => go("preset")}><span>≡</span>{t("presetEditor")}</button>}
+        {selectedCharacter && <><button className={page === "overview" ? "active" : ""} onClick={() => go("overview")}><Icon name="overview" />{t("overview")}</button>
+        <button className={page === "playground" ? "active" : ""} onClick={() => go("playground")}><Icon name="play" />{t("playgroundTitle")}</button>
+        <button className={page === "world" ? "active" : ""} onClick={() => go("world")}><Icon name="world" />{t("worldOverview")}</button>
+        <button className={page === "foundation" ? "active" : ""} onClick={() => go("foundation")}><Icon name="foundation" />{t("foundation")}</button>
+        <button className={page === "scenes" ? "active" : ""} onClick={() => go("scenes")}><Icon name="scenes" />{t("scenes")}</button>
+        <button className={page === "dialogue" ? "active" : ""} onClick={() => go("dialogue")}><Icon name="dialogue" />{t("dialogueVoice")}</button>
+        <button className={page === "runtime" ? "active" : ""} onClick={() => go("runtime")}><Icon name="preset" />{t("runtimeInstructions")}</button>
+        <button className={page === "metadata" ? "active" : ""} onClick={() => go("metadata")}><Icon name="metadata" />{t("metadata")}</button>
+        <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><Icon name="book" />{t("embeddedLorebook")}</button>
+        {selectedCharacter.resource.storageMode !== "local" && <button className={page === "linked-lorebooks" ? "active" : ""} onClick={() => go("linked-lorebooks")}><Icon name="sync" />{t("linkedLorebooks")}</button>}
+        <button className={page === "extensions" ? "active" : ""} onClick={() => go("extensions")}><Icon name="extensions" />{t("extensionsAndScripts")}</button>
+        <button className={page === "mvu" ? "active" : ""} onClick={() => go("mvu")}><Icon name="refresh" />{t("mvuComposer")}</button>
+        <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><Icon name="assets" />{t("assetsAndCover")}</button></>}
+        {standaloneLorebook && <button className={page === "lorebook-overview" ? "active" : ""} onClick={() => go("lorebook-overview")}><Icon name="overview" />{t("overview")}</button>}
+        {standaloneLorebook && <button className={page === "lorebook" ? "active" : ""} onClick={() => go("lorebook")}><Icon name="book" />{t("lorebookEditor")}</button>}
+        {standaloneLorebook && <button className={page === "assets" ? "active" : ""} onClick={() => go("assets")}><Icon name="assets" />{t("assetsAndCover")}</button>}
+        {standalonePreset && <button className={page === "preset-overview" ? "active" : ""} onClick={() => go("preset-overview")}><Icon name="overview" />{t("overview")}</button>}
+        {standalonePreset && <button className={page === "preset" ? "active" : ""} onClick={() => go("preset")}><Icon name="preset" />{t("presetEditor")}</button>}
         {selectedWorld && <><button className={page === "world-overview" ? "active" : ""} onClick={() => go("world-overview")}><span>◫</span>{t("wseOverviewTitle")}</button><button className={page === "world-details" ? "active" : ""} onClick={() => go("world-details")}><span>◎</span>{t("wseWorldAuthor")}</button>{WORLD_SECTIONS.map((section) => <button key={section} className={page === `world-section:${section}` ? "active" : ""} onClick={() => go(`world-section:${section}`)}><span>◇</span>{worldSectionLabel(t, section)}</button>)}{WORLD_CONFIGS.map((config) => <button key={config} className={page === `world-config:${config}` ? "active" : ""} onClick={() => go(`world-config:${config}`)}><span>⌁</span>{worldConfigLabel(t, config)}</button>)}<button className={page === "world-prompts" ? "active" : ""} onClick={() => go("world-prompts")}><span>≡</span>{t("wsePrompts")}</button><button className={page === "world-workflows" ? "active" : ""} onClick={() => go("world-workflows")}><span>▧</span>{t("wseWorkflows")}</button><button className={page === "world-media" ? "active" : ""} onClick={() => go("world-media")}><span>▧</span>{t("wseMedia")}</button></>}
       </nav>
-      <footer className="drawer-footer"><div><strong>{t("appName")}</strong><small>v{data.version}</small></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => go("settings")} aria-label={t("openSettings")} title={t("settings")}>⚙</button></footer>
+      <footer className="drawer-footer"><div><strong>{t("appName")}</strong><small>v{data.version}</small></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => go("settings")} aria-label={t("openSettings")} title={t("settings")}><Icon name="settings" /></button></footer>
     </aside>
 
-    <main className="page">
+    <main className={`page ${coAuthorView ? "coauthor-view" : ""}`}>
       {page === "overview" && selectedCharacter && <OverviewPage selected={selectedCharacter} conflict={null} dirty={cardDirty} context={editorContext} onContext={setEditorContext} onNavigate={go} onChangeResource={changeResource} onRetryConflict={() => undefined} onUseServerDraft={() => undefined} t={t} />}
       {page === "playground" && selectedCharacter && <CharacterPlaygroundPage selected={selectedCharacter} providerConfigured={Boolean(data.config.llm.baseUrl && data.config.llm.model && (data.config.llm.provider === "ollama" || data.config.llm.apiKey))} t={t} />}
       {page === "lorebook-overview" && standaloneLorebook && <LorebookOverviewPage selected={standaloneLorebook} dirty={cardDirty} onEdit={() => go("lorebook")} onChangeResource={changeResource} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} t={t} />}
@@ -360,6 +365,7 @@ function App() {
       {page === "linked-lorebooks" && selectedCharacter && <LinkedLorebooksPage selected={selectedCharacter} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} t={t} />}
       {page === "assets" && <AssetsPage selected={selected} dirty={cardDirty} status={cardStatus} onCardChange={selectedCharacter ? updateCard : null} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} onSave={() => void saveCard()} t={t} />}
       {page === "settings" && <SettingsPage draft={draft} status={status} llm={llm} provider={provider} setDraft={setDraft} save={save} t={t} />}
+      {selected.resource.storageMode !== "local" && ["overview", "lorebook-overview", "preset-overview", "world-overview"].includes(page) && <CollaborationPanel resource={selected.resource} currentUser={currentUser} onResource={(resource) => setSelected((current) => current ? { ...current, resource } : current)} onLeave={changeResource} t={t} />}
     </main>
 
     <AssistantDrawer open={rightOpen} onClose={() => setRightOpen(false)} selected={selected} worldOverview={selectedCharacter ? worldOverview : null} context={editorContext} draftPrompt={assistantPrompt} onDraftPromptUsed={consumeAssistantPrompt} providerConfigured={Boolean(data.config.llm.baseUrl && data.config.llm.model && (data.config.llm.provider === "ollama" || data.config.llm.apiKey))} onAccept={acceptProposal} onClearContext={() => setEditorContext({ path: null, selectedText: null, cursor: null })} t={t} />
