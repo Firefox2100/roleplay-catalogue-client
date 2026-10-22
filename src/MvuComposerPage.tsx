@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { MessageKey } from "./i18n";
 import type { CharacterCardV3Data, CharacterRegexScript, CharacterScript, JsonValue, LorebookData, LorebookEntry, SelectedCharacter } from "./types";
+import { createUiId } from "./uiId";
 import "./MvuComposerPage.css";
 
 type FieldType = "string" | "number" | "boolean" | "enum" | "list" | "record";
@@ -13,7 +14,7 @@ const DESIGN_KEY = "roleplay_catalogue_client_mvu";
 const MARKER_KEY = "roleplayCatalogueClientArtifact";
 const RUNTIME_MODULE = "https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js";
 const SCHEMA_MODULE = "https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js";
-const id = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+const id = () => createUiId("mvu");
 const blankField = (): MvuField => ({ id: id(), name: "", type: "string", initial: "", description: "", minimum: null, maximum: null, options: "" });
 const blankGroup = (): MvuGroup => ({ id: id(), name: "", description: "", fields: [blankField()] });
 const marker = (kind: string): Record<string, JsonValue> => ({ [MARKER_KEY]: kind });
@@ -54,7 +55,7 @@ const schemaFor = (design: MvuDesign) => {
   const groups = design.groups.filter((group) => group.name.trim()).map((group) => `  ${js(group.name.trim())}: z.object({\n${group.fields.filter((field) => field.name.trim()).map((field) => `    ${js(field.name.trim())}: ${fieldSchema(field)},`).join("\n")}\n  }).prefault({}),`).join("\n");
   return `import { registerMvuSchema } from ${js(SCHEMA_MODULE)};\n\nexport const Schema = z.object({\n${groups}\n});\n\n$(() => registerMvuSchema(Schema));`;
 };
-const yamlValue = (value: JsonValue) => typeof value === "string" ? JSON.stringify(value) : JSON.stringify(value);
+const yamlValue = (value: JsonValue) => JSON.stringify(value);
 const initialYaml = (variables: Record<string, JsonValue>) => Object.entries(variables).map(([group, value]) => `${JSON.stringify(group)}:\n${Object.entries(value as Record<string, JsonValue>).map(([field, initial]) => `  ${JSON.stringify(field)}: ${yamlValue(initial)}`).join("\n")}`).join("\n");
 const rulesFor = (design: MvuDesign, chinese: boolean) => design.groups.filter((group) => group.name.trim()).map((group) => `${group.name}:\n${group.fields.filter((field) => field.name.trim()).map((field) => `  - ${field.name}: ${field.description.trim() || (chinese ? "仅在叙事事实发生变化时更新" : "Update only when the narrative establishes a change")}${field.type === "number" && (field.minimum !== null || field.maximum !== null) ? ` (${field.minimum ?? "−∞"}…${field.maximum ?? "∞"})` : ""}`).join("\n")}`).join("\n\n");
 const loreEntry = (kind: string, comment: string, content: string, enabled: boolean, constant: boolean, order: number): LorebookEntry => ({ id: id(), keys: [], secondary_keys: [], content, extensions: { ...marker(kind), position: 4, depth: 0, prevent_recursion: true, exclude_recursion: true }, enabled, insertion_order: order, use_regex: false, constant, case_sensitive: null, name: comment, comment, selective: false, priority: null, position: "after_char" });

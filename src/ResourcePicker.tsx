@@ -34,11 +34,11 @@ function ResourceCard({ resource, selected, busy, choose, t }: { resource: Catal
   const tooltipId = useId(), description = resource.metadata.description.trim();
   return <article className={`resource-card ${selected ? "selected" : ""}`}>
     <ResourceCover resource={resource} />
-    <div className="resource-card-body"><div className="resource-card-info" tabIndex={description ? 0 : undefined} aria-describedby={description ? tooltipId : undefined}>
+    <div className="resource-card-body"><div className="resource-card-info">
       <div className="resource-card-title"><h2>{resource.metadata.name}</h2><div className="resource-badges"><span>{t(typeLabel(resource.resourceType as SupportedResourceType))}</span><span>{t(resource.metadata.language === "zh-cn" ? "languageZhCN" : "languageEnUK")}</span><span>{t(resource.metadata.visibility as "private" | "authenticated" | "public")}</span></div></div>
       {description && <div className="resource-tooltip" id={tooltipId} role="tooltip">{description}</div>}
     </div></div>
-    <button onClick={() => void choose(resource.id)} disabled={busy || selected}>{selected ? t("selected") : busy ? t("loading") : t("select")}</button>
+    <button type="button" aria-describedby={description ? tooltipId : undefined} onClick={() => void choose(resource.id)} disabled={busy || selected}>{selected ? t("selected") : busy ? t("loading") : t("select")}</button>
   </article>;
 }
 

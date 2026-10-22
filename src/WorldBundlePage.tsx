@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { MessageKey } from "./i18n";
 import type { EditorContext, JsonValue, SelectedWorld, WorldBundleData } from "./types";
+import { createUiId } from "./uiId";
 import "./WorldBundlePage.css";
 
 export const WORLD_SECTIONS = ["locations", "landmarks", "characters", "background_characters", "items", "item_stacks", "equipment", "containers", "turns", "events", "memories", "intents", "entity_relationships", "subjective_entity_claims", "entity_variable_sets"] as const;
@@ -15,7 +16,7 @@ const configKeys: Record<string, MessageKey> = { chat: "wseChatConfig", embed: "
 export const worldSectionLabel = (t: T, key: string) => t(sectionKeys[key] ?? "wseUnknownSection").replace("{name}", humanise(key));
 export const worldConfigLabel = (t: T, key: string) => t(configKeys[key] ?? "wseUnknownConfig").replace("{name}", humanise(key));
 const fieldLabel = (t: T, key: string) => fieldKeys[key] ? t(fieldKeys[key]) : humanise(key);
-const newId = () => globalThis.crypto?.randomUUID?.() ?? `world-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const newId = () => createUiId("world");
 const clone = <TValue,>(value: TValue): TValue => structuredClone(value);
 type RegistryOption = { id: string; label: string; type: string };
 type Registry = Record<string, RegistryOption[]> & { allPhysical: RegistryOption[] };

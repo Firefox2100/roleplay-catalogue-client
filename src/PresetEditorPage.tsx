@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import type { MessageKey } from "./i18n";
 import { estimateTokens } from "./OverviewPage";
 import type { EditorContext, JsonValue, PresetData, PresetPrompt, SelectedPreset } from "./types";
+import { createUiId } from "./uiId";
 import "./PresetEditorPage.css";
 
 const samplers = ["temperature", "frequency_penalty", "presence_penalty", "top_p", "top_k", "top_a", "min_p", "repetition_penalty", "openai_max_context", "openai_max_tokens", "seed", "n"] as const;
 const known = new Set<string>([...samplers, "stream_openai", "prompts", "prompt_order"]);
-const id = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+const id = () => createUiId("prompt");
 const promptTokens = (prompt: PresetPrompt) => estimateTokens(typeof prompt.content === "string" ? prompt.content : "");
 const parseValue = (text: string): JsonValue => { try { return JSON.parse(text) as JsonValue; } catch { return text; } };
 

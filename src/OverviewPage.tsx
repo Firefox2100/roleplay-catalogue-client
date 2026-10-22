@@ -2,6 +2,7 @@ import type { MessageKey } from "./i18n";
 import { useEffect, useState } from "react";
 import { exportResourceDraft, listResourceVersions, previewResourceDraft, publishResource } from "./backend";
 import type { CharacterCardV3Data, CharacterDraft, EditorContext, JsonValue, LorebookEntry, ResourceVersionSummary, SelectedCharacter } from "./types";
+import { isValidRegex } from "./regexLiteral";
 import "./OverviewPage.css";
 
 type FieldKey = "name" | "description" | "personality" | "scenario" | "first_mes" | "mes_example" | "creator_notes" | "system_prompt" | "post_history_instructions" | "creator" | "character_version";
@@ -57,7 +58,7 @@ export function cardStatistics(card: CharacterCardV3Data) {
   return { fieldRows, entries, typeCounts, regexCount, scriptCount, alternateCount, totalTokens };
 }
 
-const validRegex = (pattern: string) => { try { const literal = pattern.startsWith("/") ? pattern.match(/^\/(.*)\/([a-z]*)$/s) : null; new RegExp(literal ? literal[1] : pattern, literal ? literal[2] : ""); return true; } catch { return false; } };
+const validRegex = isValidRegex;
 
 export function reviewCard(card: CharacterCardV3Data, t: (key: MessageKey) => string): ReviewIssue[] {
   const issues: ReviewIssue[] = [];
@@ -68,7 +69,7 @@ export function reviewCard(card: CharacterCardV3Data, t: (key: MessageKey) => st
   if (!card.tags?.length) issues.push({ severity: "warning", title: "missingCardTags", detail: t("missingCardTagsDetail"), page: "metadata", path: "tags" });
   (card.alternate_greetings ?? []).forEach((value, index) => { if (!value.trim()) issues.push({ severity: "error", title: "emptyGreeting", detail: `${t("alternateOpenings")} ${index + 1}`, page: "scenes", path: `alternate_greetings.${index}` }); });
   (card.group_only_greetings ?? []).forEach((value, index) => { if (!value.trim()) issues.push({ severity: "error", title: "emptyGreeting", detail: `${t("groupOpenings")} ${index + 1}`, page: "scenes", path: `group_only_greetings.${index}` }); });
-  if (card.mes_example?.trim() && !/(?:^|\n)\s*<START>\s*(?:\n|$)/i.test(card.mes_example)) issues.push({ severity: "warning", title: "dialogueBoundaryMissing", detail: t("dialogueBoundaryMissingDetail"), page: "dialogue", path: "mes_example" });
+  if (card.mes_example?.trim() && !card.mes_example.split(/\r?\n/).some((line) => line.trim().toLocaleUpperCase() === "<START>")) issues.push({ severity: "warning", title: "dialogueBoundaryMissing", detail: t("dialogueBoundaryMissingDetail"), page: "dialogue", path: "mes_example" });
   const entries = card.character_book?.entries ?? [];
   const keyOwners = new Map<string, number>();
   entries.forEach((entry: LorebookEntry, index) => {
@@ -143,8 +144,8 @@ export function OverviewPage({ selected, conflict, dirty, context, onContext, on
         <section className="overview-panel"><h2>{t("loreTypes")}</h2>{stats.typeCounts.size ? <div className="type-list">{[...stats.typeCounts].sort(([a], [b]) => a.localeCompare(b)).map(([type, count]) => <span key={type}>{type}<strong>{count}</strong></span>)}</div> : <p className="muted">—</p>}</section>
       </div>
     </div>
-    {discardOpen && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setDiscardOpen(false); }}><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("useServerDraftTitle")}</h2><p>{t("useServerDraftBody")}</p><div><button className="secondary" autoFocus onClick={() => setDiscardOpen(false)}>{t("cancel")}</button><button className="danger-button" onClick={() => { setDiscardOpen(false); onUseServerDraft(); }}>{t("useServerDraft")}</button></div></section></div>}
-    {previewCard && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><section className="confirmation-dialog release-preview" role="dialog" aria-modal="true"><h2>{String(previewCard.name ?? t("mergedPreview"))}</h2><p>{t("mergedPreviewHint")}</p>{["description", "personality", "scenario", "first_mes", "mes_example", "creator_notes", "system_prompt", "post_history_instructions"].map((field) => typeof previewCard[field] === "string" && previewCard[field] ? <article key={field}><strong>{field.replace(/_/g, " ")}</strong><p>{String(previewCard[field])}</p></article> : null)}<div><button className="primary" onClick={() => setPreview(null)}>{t("close")}</button></div></section></div>}
+    {discardOpen && <div className="confirmation-layer"><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("useServerDraftTitle")}</h2><p>{t("useServerDraftBody")}</p><div><button className="secondary" autoFocus onClick={() => setDiscardOpen(false)}>{t("cancel")}</button><button className="danger-button" onClick={() => { setDiscardOpen(false); onUseServerDraft(); }}>{t("useServerDraft")}</button></div></section></div>}
+    {previewCard && <div className="confirmation-layer"><section className="confirmation-dialog release-preview" role="dialog" aria-modal="true"><h2>{String(previewCard.name ?? t("mergedPreview"))}</h2><p>{t("mergedPreviewHint")}</p>{["description", "personality", "scenario", "first_mes", "mes_example", "creator_notes", "system_prompt", "post_history_instructions"].map((field) => typeof previewCard[field] === "string" && previewCard[field] ? <article key={field}><strong>{field.replace(/_/g, " ")}</strong><p>{String(previewCard[field])}</p></article> : null)}<div><button className="primary" onClick={() => setPreview(null)}>{t("close")}</button></div></section></div>}
     {publishOpen && <div className="confirmation-layer"><section className="confirmation-dialog" role="dialog" aria-modal="true"><h2>{t("publishRelease")}</h2><p>{t("publishReleaseHint")}</p><label>{t("releaseVersionLabel")}<input autoFocus value={releaseVersion} onChange={(event) => setReleaseVersion(event.target.value)} /></label><div><button className="secondary" onClick={() => setPublishOpen(false)}>{t("cancel")}</button><button className="primary" disabled={!releaseVersion.trim() || releaseStatus === "publishing"} onClick={() => void publish()}>{releaseStatus === "publishing" ? t("publishing") : t("publishRelease")}</button></div></section></div>}
   </section>;
 }

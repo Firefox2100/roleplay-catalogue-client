@@ -3,7 +3,7 @@ import { estimateTokens } from "./OverviewPage";
 import type { CharacterCardV3Data, EditorContext, SelectedCharacter, WorldOverview } from "./types";
 import "./DialogueVoicePage.css";
 
-const countMatches = (value: string, expression: RegExp) => value.match(expression)?.length ?? 0;
+const countLines = (value: string, predicate: (line: string) => boolean) => value.split(/\r?\n/).filter((line) => predicate(line.trim())).length;
 
 export function DialogueVoicePage({ selected, castMode, context, dirty, status, onChange, onContext, onDraft, onSave, t }: {
   selected: SelectedCharacter;
@@ -20,9 +20,13 @@ export function DialogueVoicePage({ selected, castMode, context, dirty, status, 
   if (!selected.draft) return <section className="dialogue-page"><p className="loading-text">{t("noDraftOverview")}</p></section>;
   const card = selected.draft.data;
   const value = typeof card.mes_example === "string" ? card.mes_example : "";
-  const examples = countMatches(value, /(?:^|\n)\s*<START>\s*(?:\n|$)/gi);
-  const characterTurns = countMatches(value, /(?:^|\n)\s*{{char}}\s*:/gi);
-  const userTurns = countMatches(value, /(?:^|\n)\s*{{user}}\s*:/gi);
+  const examples = countLines(value, (line) => line.toLocaleUpperCase() === "<START>");
+  const hasSpeaker = (line: string, speaker: string) => {
+    const normalised = line.toLocaleLowerCase();
+    return normalised.startsWith(speaker) && normalised.slice(speaker.length).trimStart().startsWith(":");
+  };
+  const characterTurns = countLines(value, (line) => hasSpeaker(line, "{{char}}"));
+  const userTurns = countLines(value, (line) => hasSpeaker(line, "{{user}}"));
   const update = (next: string, cursor: number | null) => {
     onChange({ ...card, mes_example: next });
     onContext({ path: "mes_example", selectedText: next || null, cursor });

@@ -2,20 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { previewLorebookActivation } from "./backend";
 import type { MessageKey } from "./i18n";
 import { estimateTokens } from "./OverviewPage";
+import { splitRegexLiteral } from "./regexLiteral";
 import type { EditorContext, LorebookActivationResult, LorebookData, LorebookDraft, LorebookEntry } from "./types";
+import { createUiId } from "./uiId";
 import "./LorebookEditorPage.css";
 
 const blankBook = (name: string): LorebookData => ({ name, description: "", scan_depth: null, token_budget: null, recursive_scanning: false, extensions: {}, entries: [] });
 const blankEntry = (order: number): LorebookEntry => ({ name: "", comment: "", keys: [], secondary_keys: [], content: "", extensions: {}, enabled: true, insertion_order: order, use_regex: false, constant: false, selective: false, case_sensitive: null, priority: null, position: null });
-const newKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+const newKey = () => createUiId("lore-entry");
 const listText = (values: string[] | null | undefined) => (values ?? []).join("\n");
 const parseList = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 
 type LorebookDiagnostic = { level: "error" | "warning"; entry: number; message: MessageKey };
 const compileRegex = (pattern: string, caseSensitive: boolean | null | undefined = true) => {
-  const literal = pattern.startsWith("/") ? pattern.match(/^\/(.*)\/([a-z]*)$/s) : null;
-  const source = literal ? literal[1] : pattern;
-  let flags = literal ? literal[2] : "";
+  const literal = splitRegexLiteral(pattern);
+  const source = literal?.source ?? pattern;
+  let flags = literal?.flags ?? "";
   if (!caseSensitive && !flags.includes("i")) flags += "i";
   return new RegExp(source, flags);
 };
@@ -121,7 +123,7 @@ export function LorebookEditorPage({ value, fallbackName, embedded, dirty, statu
       </> : <div className="entry-unselected"><p>{t("selectLoreEntry")}</p><button className="primary" onClick={addEntry}>{t("addEntry")}</button></div>}</section>
     </div>
     <div className="lorebook-save-bar"><span role="status">{status === "saved" ? t("lorebookSaved") : status === "error" ? t("lorebookSaveError") : dirty ? t("unsavedChanges") : ""}</span><button className="primary" onClick={onSave} disabled={!dirty || status === "saving"}>{status === "saving" ? t("saving") : t("saveLorebook")}</button></div>
-    {pendingDelete && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingDelete(null); }}><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("deleteEntryTitle")}</h2><p>{t("deleteEntryBody")}</p><div><button className="secondary" autoFocus onClick={() => setPendingDelete(null)}>{t("cancel")}</button><button className="danger-button" onClick={remove}>{t("deleteEntry")}</button></div></section></div>}
-    {discardConflictOpen && <div className="confirmation-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setDiscardConflictOpen(false); }}><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("useServerDraftTitle")}</h2><p>{t("useServerDraftBody")}</p><div><button className="secondary" autoFocus onClick={() => setDiscardConflictOpen(false)}>{t("cancel")}</button><button className="danger-button" onClick={() => { setDiscardConflictOpen(false); onUseServerDraft?.(); }}>{t("useServerDraft")}</button></div></section></div>}
+    {pendingDelete && <div className="confirmation-layer"><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("deleteEntryTitle")}</h2><p>{t("deleteEntryBody")}</p><div><button className="secondary" autoFocus onClick={() => setPendingDelete(null)}>{t("cancel")}</button><button className="danger-button" onClick={remove}>{t("deleteEntry")}</button></div></section></div>}
+    {discardConflictOpen && <div className="confirmation-layer"><section className="confirmation-dialog" role="alertdialog" aria-modal="true"><h2>{t("useServerDraftTitle")}</h2><p>{t("useServerDraftBody")}</p><div><button className="secondary" autoFocus onClick={() => setDiscardConflictOpen(false)}>{t("cancel")}</button><button className="danger-button" onClick={() => { setDiscardConflictOpen(false); onUseServerDraft?.(); }}>{t("useServerDraft")}</button></div></section></div>}
   </section>;
 }

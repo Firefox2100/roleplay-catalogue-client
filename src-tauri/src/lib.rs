@@ -14,6 +14,40 @@ use tauri_plugin_dialog::DialogExt;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+async fn read_file(path: PathBuf) -> Result<Vec<u8>, String> {
+    tauri::async_runtime::spawn_blocking(move || fs::read(path))
+        .await
+        .map_err(|error| format!("File task failed: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+async fn write_file(path: PathBuf, bytes: Vec<u8>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || fs::write(path, bytes))
+        .await
+        .map_err(|error| format!("File task failed: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+async fn remove_file_if_exists(path: PathBuf) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if path.exists() {
+            fs::remove_file(path)
+        } else {
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|error| format!("File task failed: {error}"))?
+    .map_err(|error| error.to_string())
+}
+
+async fn remove_directory(path: PathBuf) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || fs::remove_dir_all(path))
+        .await
+        .map_err(|error| format!("File task failed: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LlmConfig {
@@ -1067,7 +1101,7 @@ async fn fetch_character_cover(
                 if path.exists() {
                     return Ok(Some(CoverImage {
                         media_type: media_type.into(),
-                        data: BASE64.encode(fs::read(path).map_err(|e| e.to_string())?),
+                        data: BASE64.encode(read_file(path).await?),
                     }));
                 }
             }
@@ -1238,9 +1272,7 @@ async fn upload_resource_cover(
                 "cover.avif",
             ] {
                 let path = dir.join(name);
-                if path.exists() {
-                    fs::remove_file(path).map_err(|e| e.to_string())?;
-                }
+                remove_file_if_exists(path).await?;
             }
             let extension = match media_type.as_str() {
                 "image/png" => "png",
@@ -1249,7 +1281,7 @@ async fn upload_resource_cover(
                 "image/avif" => "avif",
                 _ => "jpg",
             };
-            fs::write(dir.join(format!("cover.{extension}")), bytes).map_err(|e| e.to_string())?;
+            write_file(dir.join(format!("cover.{extension}")), bytes).await?;
             return read_local_resource(&dir);
         }
     }
@@ -1293,9 +1325,7 @@ async fn clear_resource_cover(
                 "cover.avif",
             ] {
                 let path = dir.join(name);
-                if path.exists() {
-                    fs::remove_file(path).map_err(|e| e.to_string())?;
-                }
+                remove_file_if_exists(path).await?;
             }
             return read_local_resource(&dir);
         }
@@ -3158,7 +3188,9 @@ async fn import_resource_file(
         .and_then(|v| v.to_str())
         .ok_or("Selected file has no valid name")?
         .to_string();
-    let bytes = fs::read(&path).map_err(|e| format!("Could not read selected file: {e}"))?;
+    let bytes = read_file(path.clone())
+        .await
+        .map_err(|error| format!("Could not read selected file: {error}"))?;
     if bytes.is_empty() {
         return Err("Selected file is empty".into());
     }
@@ -3174,7 +3206,7 @@ async fn import_resource_file(
                 let data = card_data_from_bytes(&file_name, &bytes)?;
                 write_pretty(&dir.join("card.json"), &data)?;
                 if file_name.to_ascii_lowercase().ends_with(".png") {
-                    fs::write(dir.join("cover.png"), &bytes).map_err(|e| e.to_string())?;
+                    write_file(dir.join("cover.png"), bytes.clone()).await?;
                 }
                 data
             }
@@ -3426,7 +3458,7 @@ async fn transport_local_resource(
                         .unwrap_or("world-image")
                         .to_string(),
                     inferred_image_media_type(&path)?.into(),
-                    fs::read(&path).map_err(|e| e.to_string())?,
+                    read_file(path.clone()).await?,
                     &local.metadata,
                 )
                 .await?;
@@ -3458,7 +3490,7 @@ async fn transport_local_resource(
                         &remote.id,
                         name.into(),
                         media_type.into(),
-                        fs::read(path).map_err(|e| e.to_string())?,
+                        read_file(path).await?,
                     )
                     .await?;
                     break;
@@ -3491,7 +3523,7 @@ async fn transport_local_resource(
     }
     .await;
     let selected = transport_result.map_err(|error| format!("Transport created catalogue resource {} but did not complete; the local resource was retained. {error}", remote.id))?;
-    fs::remove_dir_all(&dir).map_err(|e| {
+    remove_directory(dir).await.map_err(|e| {
         format!(
             "Catalogue confirmed resource {}, but the local workspace could not be removed: {e}",
             remote.id

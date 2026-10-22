@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
 import type { MessageKey } from "./i18n";
 import type { CharacterCardV3Data, CharacterRegexScript, CharacterScript, EditorContext, JsonValue, SelectedCharacter } from "./types";
+import { splitRegexLiteral } from "./regexLiteral";
+import { createUiId } from "./uiId";
 import "./ExtensionsPage.css";
 
 type Tab = "regex" | "scripts" | "variables";
-const uid = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+const uid = () => createUiId("extension");
 const blankRegex = (): CharacterRegexScript => ({ id: uid(), scriptName: "", findRegex: "", replaceString: "", trimStrings: [], placement: [2], disabled: false, markdownOnly: false, promptOnly: false, runOnEdit: false, substituteRegex: 0, minDepth: null, maxDepth: null });
 const blankScript = (): CharacterScript => ({ type: "script", enabled: true, name: "", id: uid(), content: "", info: "", button: { enabled: false, buttons: [] }, data: {} });
-const parseRegex = (pattern: string) => { const literal = pattern.startsWith("/") ? pattern.match(/^\/(.*)\/([a-z]*)$/s) : null; return new RegExp(literal ? literal[1] : pattern, literal ? literal[2] : "g"); };
+const parseRegex = (pattern: string) => { const literal = splitRegexLiteral(pattern); return new RegExp(literal?.source ?? pattern, literal?.flags ?? "g"); };
 const valueText = (value: JsonValue) => typeof value === "string" ? value : JSON.stringify(value);
 const parseValue = (value: string): JsonValue => { try { return JSON.parse(value) as JsonValue; } catch { return value; } };
 const valueForType = (type: string): JsonValue => type === "number" ? 0 : type === "boolean" ? false : type === "array" ? [] : type === "object" ? {} : type === "null" ? null : "";
